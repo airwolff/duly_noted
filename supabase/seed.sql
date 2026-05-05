@@ -1,0 +1,1 @@
+-- Seed data is empty for the scaffold. Real fixtures arrive in Slice 2.
