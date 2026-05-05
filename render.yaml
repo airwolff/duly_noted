@@ -2,7 +2,7 @@ services:
   - type: worker
     name: duly-noted-worker
     runtime: node
-    plan: free
+    plan: starter
     region: oregon
     branch: main
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker build
