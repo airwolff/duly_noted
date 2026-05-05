@@ -1,6 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { loadEnv } from '../../../../../env.js';
 
+export const runtime = 'edge';
+
 export async function POST(request: NextRequest) {
   const env = loadEnv();
   const provided = request.headers.get('x-webhook-secret');
