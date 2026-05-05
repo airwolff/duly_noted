@@ -1,0 +1,42 @@
+{
+  "name": "@duly-noted/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./src/browser-client.ts",
+      "default": "./dist/browser-client.js"
+    },
+    "./server": {
+      "types": "./src/server-client.ts",
+      "default": "./dist/server-client.js"
+    },
+    "./service": {
+      "types": "./src/service-client.ts",
+      "default": "./dist/service-client.js"
+    },
+    "./types": {
+      "types": "./src/types.ts",
+      "default": "./dist/types.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.10.2",
+    "@supabase/supabase-js": "^2.105.3",
+    "@duly-noted/shared": "workspace:*"
+  }
+}
