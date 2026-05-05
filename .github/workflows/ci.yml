@@ -34,7 +34,7 @@ jobs:
         run: pnpm -r lint
 
       - name: Test
-        run: pnpm -r test --if-present
+        run: pnpm -r test
 
       - name: Format check
         run: pnpm format:check
