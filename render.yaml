@@ -1,0 +1,36 @@
+services:
+  - type: worker
+    name: duly-noted-worker
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker build
+    startCommand: pnpm -F worker start
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - fromGroup: duly-noted-shared
+
+  - type: cron
+    name: duly-noted-worker-cron
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    # TODO(stage-2): production schedule TBD per ingestion polling decision
+    schedule: '*/5 * * * *'
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker-cron build
+    startCommand: pnpm -F worker-cron start
+    envVars:
+      - key: NODE_VERSION
+        value: '24'
+      - fromGroup: duly-noted-shared
+
+envVarGroups:
+  - name: duly-noted-shared
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
