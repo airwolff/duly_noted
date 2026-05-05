@@ -2,7 +2,7 @@ services:
   - type: worker
     name: duly-noted-worker
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     branch: main
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker build
@@ -15,7 +15,7 @@ services:
   - type: cron
     name: duly-noted-worker-cron
     runtime: node
-    plan: starter
+    plan: free
     region: oregon
     branch: main
     # TODO(stage-2): production schedule TBD per ingestion polling decision
