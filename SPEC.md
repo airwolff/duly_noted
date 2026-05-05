@@ -109,3 +109,58 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 3, 4, 6.
 - Stage 3: confirms yt-dlp is the audio extraction path (assumed here; revisit if YouTube auto-captions become the v1 ASR strategy, in which case Render scope shrinks).
 - Stage 4: operator review step inclusion sets the `review` state semantics.
 - Stage 5: full DDL for `meetings.status` enum, including index and constraint design.
+
+---
+
+# Stage 5 — pass 1 schema (as built)
+
+The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) replaces this with the full DDL: indexes beyond primary keys, soft-delete columns, search columns, and real RLS policies.
+
+**Tables.** Six tables, plus one connectivity-check table. RLS is enabled on every table; no business policies exist beyond an anon SELECT on `_scaffold_health` (the homepage's boot probe). Default-deny applies to everything else until pass 2.
+
+| Table              | Purpose                                        | Notable columns                                                                                                                                                           |
+| ------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_scaffold_health` | Connectivity probe seeded with `'scaffold ok'` | `id uuid pk`, `message text`, `created_at timestamptz`                                                                                                                    |
+| `publications`     | Tenant root                                    | `id uuid pk`, `slug text unique`, `name text`                                                                                                                             |
+| `towns`            | Geographic unit under a publication            | `id uuid pk`, `publication_id uuid fk`, unique `(publication_id, slug)`                                                                                                   |
+| `boards`           | Meeting body under a town                      | `id uuid pk`, `town_id uuid fk`, unique `(town_id, slug)`                                                                                                                 |
+| `meetings`         | The pipeline state row                         | `id uuid pk`, `board_id uuid fk`, `status meeting_status` (default `'discovered'`), `youtube_id text`, `meeting_date date`, `last_error text`, `created_at`, `updated_at` |
+| `memberships`      | User ↔ publication join with role              | `user_id uuid → auth.users`, `publication_id uuid fk`, `role text check in ('reader','editor','admin')`, unique `(user_id, publication_id)`                               |
+
+**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, summarizing, review, published, failed`.
+
+**Identity.** No `public.users` table. `auth.users` is canonical; `memberships.user_id` joins against it directly. A `public.profiles` table can be added in pass 2 if profile fields land on the roadmap.
+
+**Indexes.** Only the primary keys, the `unique` constraints listed above, and the FK indexes Postgres creates implicitly for `references`. Performance-tuning indexes (status filtering, date ordering, search) arrive in pass 2.
+
+**Grants.** Supabase API access requires both RLS policies and table-level `GRANT`s for the `anon`, `authenticated`, and `service_role` roles. The scaffold migration grants SELECT on `_scaffold_health`; pass 2 grants the rest as policies are written. (Codified in the `*_grant_scaffold_health_select.sql` follow-up migration.)
+
+---
+
+# Stage 7 — auth subset (as built)
+
+Magic-link only. No passwords, no OAuth at v1.
+
+**Supabase Auth → URL Configuration.**
+
+- **Site URL.** `https://duly-noted.pages.dev` (production Cloudflare Pages domain). Will move to `https://dulynoted.report` once the apex domain is wired in.
+- **Redirect URLs (allowlist).**
+  - `https://duly-noted.pages.dev/auth/callback` — production
+  - `https://*.duly-noted.pages.dev/auth/callback` — Cloudflare Pages preview deploys
+  - `http://localhost:3000/auth/callback` — local dev
+
+**Email provider.** Supabase's built-in SMTP at v1 (rate-limited; sufficient for the small allowlist). Custom SMTP / Resend deferred to a later stage if rate limits become a problem.
+
+**Web env vars (Cloudflare Pages).**
+
+| Var                             | Purpose                                       |
+| ------------------------------- | --------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Project URL (publishable)                     |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon publishable key. RLS enforces access.    |
+| `ASR_WEBHOOK_SECRET`            | Shared secret verified at `/api/webhooks/asr` |
+
+The service-role key never reaches Cloudflare — only `apps/worker` and `apps/worker-cron` (Render) hold it.
+
+**Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
+
+**Open items.** End-to-end magic-link round trip was deferred at scaffold close because the Supabase built-in SMTP rate limit was hit during dashboard wiring; first authenticated request is a Slice 2 verification step.
