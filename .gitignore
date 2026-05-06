@@ -9,6 +9,7 @@ build/
 .open-next/
 .vercel/
 .wrangler/
+*.tsbuildinfo
 
 # Logs
 *.log
