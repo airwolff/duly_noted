@@ -7,3 +7,6 @@ coverage
 pnpm-lock.yaml
 supabase/.temp
 supabase/.branches
+docs/audits/*.md
+docs/workflows/*.md
+.claude/skills/**/*.md
