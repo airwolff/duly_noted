@@ -17,3 +17,9 @@ export function loadEnv(): WebEnv {
   }
   return cached;
 }
+
+// test-only: clears the module-cached env so tests can seed fresh values
+// in beforeEach without inheriting state from a prior test.
+export function _resetEnvCacheForTests(): void {
+  cached = undefined;
+}

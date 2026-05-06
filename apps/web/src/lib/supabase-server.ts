@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createServerClient } from '@duly-noted/db';
-import { loadEnv } from '../../env.js';
+import { loadEnv } from '@/lib/env.js';
 
 export async function getSupabaseServerClient() {
   const env = loadEnv();

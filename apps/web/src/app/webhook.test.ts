@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { _resetEnvCacheForTests } from '@/lib/env.js';
 
 describe('ASR webhook secret check', () => {
   const previous = process.env.ASR_WEBHOOK_SECRET;
 
   beforeEach(() => {
+    _resetEnvCacheForTests();
+    vi.resetModules();
     process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = 'anon-key';
     process.env.ASR_WEBHOOK_SECRET = 'shhh';

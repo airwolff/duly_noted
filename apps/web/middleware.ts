@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@duly-noted/db';
-import { loadEnv } from './env.js';
+import { loadEnv } from '@/lib/env.js';
 
 export async function middleware(request: NextRequest) {
   const env = loadEnv();

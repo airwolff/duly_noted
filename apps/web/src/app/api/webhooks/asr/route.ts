@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { loadEnv } from '../../../../../env.js';
+import { loadEnv } from '@/lib/env.js';
 
 export const runtime = 'edge';
 
