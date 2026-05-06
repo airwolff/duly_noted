@@ -3,6 +3,8 @@
 Date: 2026-05-05
 Status: Accepted
 
+> **Correction 2026-05-07.** Original cost figures incorrectly priced Render Cron Jobs as Starter instances ($7/mo flat). Render Cron Jobs bill per-execution-minute (~$1/mo at this workload). Figures below corrected to align with SPEC.md.
+
 ## Context
 
 Duly Noted needs a long-running process to poll the meetings queue, submit
@@ -16,7 +18,8 @@ on the order of hundreds of meeting-hours per month.
 ## Considered options
 
 - **Render Background Worker + Cron Job** — long-running Node process plus
-  separate scheduled job, $7/mo each on Starter, simple GitHub deploy,
+  separate scheduled job. $7/mo for the Background Worker on Starter; ~$1/mo
+  for the Cron Job (per-execution-minute billing). Simple GitHub deploy,
   Blueprint-as-code.
 - **Fly.io Machines** — pay-per-use, more flexible, but operational
   overhead is higher and cost ceiling is harder to predict at low scale.
@@ -41,6 +44,6 @@ Blueprint at the repo root.
   is fine.
 - Migration path if we outgrow Render Starter: standard Node service,
   deployable to any container host. No Render-specific lock-in.
-- Two paid Render services (~$14/mo) on top of Cloudflare Pages (free at
-  this scale) and Supabase Pro ($25/mo). Total infra floor ~$39/mo before
-  vendor APIs.
+- Two paid Render services (~$8/mo combined) on top of Cloudflare Pages
+  (free at this scale) and Supabase Pro ($25/mo). Total infra floor ~$34/mo
+  before vendor APIs.

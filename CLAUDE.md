@@ -111,6 +111,7 @@ Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
 
 - `SUPABASE_SERVICE_ROLE_KEY` lives only on `apps/worker` and `apps/worker-cron`. Never import it from `apps/web`. Never embed it in a client bundle. The web app uses `NEXT_PUBLIC_SUPABASE_ANON_KEY` and relies on RLS.
 - Every new table must have RLS enabled in the same migration that creates it. A table without an RLS policy is a bug.
+- Every RLS policy must be paired with the corresponding table-level GRANT (`SELECT`/`INSERT`/`UPDATE`/`DELETE` for `anon`, `authenticated`, or `service_role` as appropriate) in the same migration. RLS without GRANT silently fails to expose the API path; both are required for Supabase.
 - `auth.uid()` and `auth.jwt()` claims are the only sources of authorization identity. Do not read user identity from `raw_user_meta_data` — it is user-editable.
 - ASR vendor calls and LLM calls run only from `apps/worker` or `apps/worker-cron`. The web app does not hold vendor API keys. If a request from the web needs ASR or LLM work, it inserts a row that the worker picks up.
 - No background work in `apps/web`. Cloudflare Pages cannot run long-lived processes. Anything that takes more than the request lifecycle goes to the worker.

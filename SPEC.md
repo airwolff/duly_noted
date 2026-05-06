@@ -34,7 +34,8 @@ Monorepo, pnpm workspaces.
 duly-noted/
 ├── apps/
 │   ├── web/            # Next.js 14+ App Router → Cloudflare Pages
-│   └── worker/         # Node/TS Background Worker → Render
+│   ├── worker/         # Node/TS Background Worker → Render
+│   └── worker-cron/    # Node/TS Cron Job → Render
 ├── packages/
 │   ├── db/             # Supabase types, client factories, migrations
 │   └── shared/         # Domain types, prompt templates, segmentation schemas
@@ -54,6 +55,7 @@ Per-surface secret list:
 
 | Secret                          | Cloudflare Pages | Render Worker | Render Cron |
 | ------------------------------- | ---------------- | ------------- | ----------- |
+| `SUPABASE_URL`                  | —                | yes           | yes         |
 | `NEXT_PUBLIC_SUPABASE_URL`      | yes              | —             | —           |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes              | —             | —           |
 | `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         |
@@ -67,7 +69,7 @@ Every app validates its env at startup with zod and fails loudly. `.env.example`
 ## CI/CD
 
 - **Cloudflare Pages**: git integration on `main`. Preview deploys on PRs serve as the only non-prod environment.
-- **Render Worker + Cron**: git integration on `main`, `rootDir: apps/worker` filter prevents unrelated changes from redeploying.
+- **Render Worker + Cron**: git integration on `main`. Both services redeploy on any push to `main`; path-based deploy filtering is not configured. Acceptable at v1 — Render Starter bills monthly, not per-deploy, and worker-cron's scheduled invocation absorbs mid-deploy restarts.
 - **GitHub Actions** runs on every PR: install (frozen lockfile), typecheck across workspaces, lint, test.
 - **Migrations**: Supabase CLI run from a GitHub Action on merge to `main`, before the Render auto-deploy completes. Migrations are forward-only; rollback is by writing a forward migration that undoes.
 - **Branch strategy**: trunk-based on `main`. No `develop`, no `staging`.
@@ -114,7 +116,7 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 3, 4, 6.
 
 # Stage 5 — pass 1 schema (as built)
 
-The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) replaces this with the full DDL: indexes beyond primary keys, soft-delete columns, search columns, and real RLS policies.
+The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) replaces this with the full DDL: indexes beyond primary keys (including FK-side indexes — see Indexes paragraph), soft-delete columns, search columns, real RLS policies paired with the corresponding table-level GRANTs, and a `set_updated_at()` BEFORE UPDATE trigger applied to every table with an `updated_at` column.
 
 **Tables.** Six tables, plus one connectivity-check table. RLS is enabled on every table; no business policies exist beyond an anon SELECT on `_scaffold_health` (the homepage's boot probe). Default-deny applies to everything else until pass 2.
 
@@ -131,7 +133,7 @@ The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) r
 
 **Identity.** No `public.users` table. `auth.users` is canonical; `memberships.user_id` joins against it directly. A `public.profiles` table can be added in pass 2 if profile fields land on the roadmap.
 
-**Indexes.** Only the primary keys, the `unique` constraints listed above, and the FK indexes Postgres creates implicitly for `references`. Performance-tuning indexes (status filtering, date ordering, search) arrive in pass 2.
+**Indexes.** Only the primary keys and the `unique` constraints listed above. Postgres does not create indexes on FK referencing columns — only on the referenced (PK) side. The composite UNIQUEs on `towns` and `boards` happen to cover their FK columns as the leading column, which is incidental. FK-side indexes for `meetings.board_id`, `memberships.publication_id`, and any other referencing columns are deferred to pass 2 alongside performance-tuning indexes (status filtering, date ordering, search).
 
 **Grants.** Supabase API access requires both RLS policies and table-level `GRANT`s for the `anon`, `authenticated`, and `service_role` roles. The scaffold migration grants SELECT on `_scaffold_health`; pass 2 grants the rest as policies are written. (Codified in the `*_grant_scaffold_health_select.sql` follow-up migration.)
 
