@@ -8,7 +8,7 @@ This file is conventions only. Architecture, data model, and pipeline design liv
 
 ## 1. Repo layout
 
-Monorepo. pnpm workspaces. Three apps, two shared packages.
+Monorepo. pnpm workspaces. Three apps, two shared packages, plus Supabase Edge Functions.
 
 ```
 duly-noted/
@@ -23,33 +23,44 @@ duly-noted/
 │   │                  migration helpers, RLS-aware query helpers.
 │   └── shared/        Zod schemas, prompt templates, segmentation logic,
 │                      domain types, LLM-side helpers.
-├── supabase/          Migrations and seed data. Run via Supabase CLI.
+├── supabase/
+│   ├── migrations/    SQL migrations. Append-only.
+│   ├── functions/     Edge Functions (Deno runtime). Vendor webhook
+│   │                  receivers and other DB-adjacent serverless logic.
+│   ├── seed.sql       Local-dev seed data.
+│   └── config.toml    Supabase CLI config.
 ├── docs/
-│   └── adr/           Architecture decision records, one file per decision.
+│   ├── adr/           Architecture decision records, one file per decision.
+│   ├── audits/        Post-session audit reports + _known-non-issues.md.
+│   └── workflows/     Process docs (build-cycle.md and equivalents).
 ├── SPEC.md            Product + architecture spec. Source of truth.
 └── CLAUDE.md          This file.
 ```
 
 Shared code rule: if a type or helper is touched by more than one app, it lives in `packages/db` (if it touches the database) or `packages/shared` (otherwise). Do not import across apps. Do not import from one app into another's tests.
 
+Edge Functions in `supabase/functions/` run on Deno and have their own dependency surface. They may import from `packages/shared` only if the import is Deno-compatible (no Node-only built-ins). Generated DB types from `packages/db` are safe to consume.
+
 ---
 
 ## 2. Stack
 
-- Runtime: Node 24 LTS. Pin via `.nvmrc` and `engines.node` in `package.json`.
+- Runtime: Node 24 LTS for `apps/*`. Pin via `.nvmrc` and `engines.node` in `package.json`.
+- Edge Functions: Deno (managed by Supabase). No version pin needed; track Supabase's supported runtime.
 - Language: TypeScript, strict mode (`"strict": true`, `"noUncheckedIndexedAccess": true`).
 - Web: Next.js (App Router) on Cloudflare Pages via `@cloudflare/next-on-pages`.
-- Worker: plain Node/TS service on Render Background Worker (Starter, $7/mo).
+- Worker: plain Node/TS service on Render Background Worker (Starter, $7/mo). Custom Dockerfile because yt-dlp + ffmpeg are required.
 - Cron: plain Node/TS service on Render Cron Job. Same package layout as `apps/worker`, separate entrypoint, separate deploy.
 - DB / Auth / Storage: Supabase Pro. Postgres with RLS on every exposed table.
 - Auth: Supabase magic link. No passwords, no OAuth at v1. Session middleware in `apps/web` validates the Supabase session cookie on every request.
+- ASR vendor: AssemblyAI. Async + webhook callback to a Supabase Edge Function.
 - Validation: Zod at every API boundary and every external input (YouTube responses, ASR webhook payloads, LLM outputs). `.env` is also validated via Zod at boot.
 - HTTP client: native `fetch`. No axios.
 - Testing: Vitest. Use `vitest run` for CI, `vitest` for watch. Playwright deferred to post-MVP.
 - Lint: ESLint + `@typescript-eslint`. Format: Prettier. Both run via pnpm scripts at the repo root.
 - Queue: Postgres. The worker polls `meetings.status` for state transitions. No Redis, no SQS.
-- Migrations: Supabase CLI. Migrations checked into `supabase/migrations/` and run from a GitHub Action on merge to main, never from worker boot.
-- Secrets store of record: Dashlane. Manual sync to Cloudflare Pages and Render dashboards. Do not propose Doppler, 1Password, Infisical, etc. — the workflow is locked.
+- Migrations: Supabase CLI. Migrations checked into `supabase/migrations/` and run from a GitHub Action on merge to `main`, never from worker boot.
+- Secrets store of record: Dashlane. Manual sync to Cloudflare Pages, Render, and Supabase dashboards. Do not propose Doppler, 1Password, Infisical, etc. — the workflow is locked.
 
 Prefer the listed tools. If a task seems to need something else, raise it before installing.
 
@@ -60,19 +71,23 @@ Prefer the listed tools. If a task seems to need something else, raise it before
 Run from the repo root unless noted.
 
 ```
-pnpm install                # bootstrap workspace
-pnpm -r build               # build all workspaces
-pnpm -r test                # run all tests
-pnpm -r typecheck           # tsc --noEmit across workspaces
-pnpm -r lint                # ESLint
-pnpm format                 # Prettier write
-pnpm -F web dev             # local Next.js dev server
-pnpm -F worker dev          # local worker (tsx watch)
-pnpm -F worker start        # production worker entrypoint
-pnpm -F worker-cron start   # one-shot cron entrypoint (also runs locally)
-supabase start              # local Postgres + Studio
-supabase migration new <n>  # create a migration
-supabase db reset           # rebuild local DB from migrations + seed
+pnpm install                       # bootstrap workspace
+pnpm -r build                      # build all workspaces
+pnpm -r test                       # run all tests
+pnpm -r typecheck                  # tsc --noEmit across workspaces
+pnpm -r lint                       # ESLint
+pnpm format                        # Prettier write
+pnpm -F web dev                    # local Next.js dev server
+pnpm -F worker dev                 # local worker (tsx watch)
+pnpm -F worker start               # production worker entrypoint
+pnpm -F worker-cron start          # one-shot cron entrypoint (also runs locally)
+supabase start                     # local Postgres + Studio + Edge Functions runtime
+supabase migration new <n>         # create a migration
+supabase db reset                  # rebuild local DB from migrations + seed
+supabase functions serve           # run Edge Functions locally
+supabase functions deploy <name>   # deploy a single Edge Function
+supabase secrets set KEY=value     # set a secret on the Supabase project for Edge Functions
+docker build -t duly-noted-worker apps/worker  # build the worker container locally
 ```
 
 Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
@@ -109,15 +124,19 @@ Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
 
 ## 6. Hard rules — do not violate
 
-- `SUPABASE_SERVICE_ROLE_KEY` lives only on `apps/worker` and `apps/worker-cron`. Never import it from `apps/web`. Never embed it in a client bundle. The web app uses `NEXT_PUBLIC_SUPABASE_ANON_KEY` and relies on RLS.
+- `SUPABASE_SERVICE_ROLE_KEY` lives only on `apps/worker`, `apps/worker-cron`, and Supabase Edge Functions in `supabase/functions/`. Never import it from `apps/web`. Never embed it in a client bundle. The web app uses `NEXT_PUBLIC_SUPABASE_ANON_KEY` and relies on RLS.
+- `ASR_VENDOR_API_KEY` lives only on `apps/worker` and the `supabase/functions/asr-webhook` Edge Function. The Edge Function fetches the completed transcript from AssemblyAI; no other surface holds the vendor key.
+- Vendor webhook receivers run as Supabase Edge Functions in `supabase/functions/`. `apps/web` does not host webhook receivers. Receivers verify the auth header against `ASR_WEBHOOK_SECRET` before any side effect (DB write, vendor fetch, Storage upload).
 - Every new table must have RLS enabled in the same migration that creates it. A table without an RLS policy is a bug.
 - Every RLS policy must be paired with the corresponding table-level GRANT (`SELECT`/`INSERT`/`UPDATE`/`DELETE` for `anon`, `authenticated`, or `service_role` as appropriate) in the same migration. RLS without GRANT silently fails to expose the API path; both are required for Supabase.
 - Migrations must be backwards-compatible with the previously deployed worker. Additive changes (new column, new table, new index) deploy ahead of the code that uses them. Destructive changes (drop column, drop table, narrow constraint) follow expand/contract across multiple deploys: first deploy code that stops using the old structure, then deploy the migration that removes it. A migration that breaks the running worker on apply is a bug. The migrate workflow runs in parallel with Render's auto-deploy; backwards-compatibility is what makes that race safe.
 - `auth.uid()` and `auth.jwt()` claims are the only sources of authorization identity. Do not read user identity from `raw_user_meta_data` — it is user-editable.
-- ASR vendor calls and LLM calls run only from `apps/worker` or `apps/worker-cron`. The web app does not hold vendor API keys. If a request from the web needs ASR or LLM work, it inserts a row that the worker picks up.
+- ASR vendor calls and LLM calls run only from `apps/worker`, `apps/worker-cron`, or `supabase/functions/`. The web app does not hold vendor API keys. If a request from the web needs ASR or LLM work, it inserts a row that the worker picks up.
 - No background work in `apps/web`. Cloudflare Pages cannot run long-lived processes. Anything that takes more than the request lifecycle goes to the worker.
-- Webhook callbacks (ASR vendor → web app) must verify the shared secret from `ASR_WEBHOOK_SECRET` before doing any work.
-- Do not commit `.env*` files except `.env.example`. Real secrets live in Cloudflare and Render dashboards.
+- `apps/worker-cron` must use the `playlistItems.list` + `videos.list` pattern for video discovery; `search.list` (100 quota units/call) is forbidden. The uploads playlist ID is `UU` + the rest of the channel ID, computed at the column level — no `channels.list` call needed at scan time.
+- yt-dlp version is pinned in `apps/worker/Dockerfile` via build arg. ffmpeg version comes from the pinned base image. Bumps are intentional commits, not lockfile drift.
+- All worker queue reads use `SELECT ... FOR UPDATE SKIP LOCKED` followed by an atomic `UPDATE meetings SET status = ...` on the locked row. Read-then-write without the lock is a bug.
+- Do not commit `.env*` files except `.env.example`. Real secrets live in Cloudflare, Render, and Supabase dashboards.
 - LLM outputs are untrusted input. Validate with Zod before writing to the database. Never `JSON.parse` an LLM response into a typed value without validation.
 - Cost discipline: this project runs on a tight budget. Before adding a service, dependency, or paid tier, confirm the cost impact against the figures in `SPEC.md`. If it changes the cost model, update `SPEC.md` in the same PR.
 
@@ -133,6 +152,9 @@ If a request asks for any of the following, stop and confirm before proceeding. 
 - Video sources other than YouTube (Vimeo, Granicus, CivicPlus, direct MP4).
 - Additional publications beyond the single tenant configured at launch. The schema is multi-tenant; the deployment is not.
 - Full-text or semantic search backends other than what `SPEC.md` specifies for v1.
+- AssemblyAI premium add-ons: `auto_chapters`, `sentiment_analysis`, `content_safety`, `iab_categories`, `entity_detection`, vendor-side `summarization`. Segmentation and summarization run on our own LLM pipeline.
+- Webhook receivers in `apps/web`. All vendor webhooks land at Supabase Edge Functions.
+- Automatic retry of `failed` meetings. Manual reset only.
 
 Tenant-readiness in the schema does not mean tenant onboarding flows. Build the schema correctly; do not build admin tooling for a second tenant.
 
