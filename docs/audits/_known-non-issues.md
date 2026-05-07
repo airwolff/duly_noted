@@ -76,3 +76,11 @@ keep the entry — do not delete. The history is the value.
 - Scope: apps/worker/package.json, apps/worker-cron/package.json, root package.json
 - Reasoning: `apps/worker` and `apps/worker-cron` rely on `tsx` and `typescript` hoisted from the workspace root devDependencies. This is the standard pnpm workspace pattern — pnpm hoists root devDeps and resolves them from per-workspace bin paths, which is why Render's `pnpm install --frozen-lockfile && pnpm -F worker build` succeeds. The conditional risk (a future Render contract that strips devDeps via `--prod` or similar) is not a present defect, and the remediation if it ever fires is a 30-second `package.json` edit per worker. Duplicating `tsx`/`typescript` into each worker's devDependencies now would defend against an unspecified future change at the cost of a slightly fatter dependency graph.
 - Revisit when: Render's build documentation introduces `--prod`, devDep-stripping behavior, or any other contract change that breaks pnpm root-hoisted devDep resolution; or when a third worker workspace is added (point at which the duplication cost compounds).
+
+## NI-006: Three direct-push commits on main lack Conventional Commits prefix
+- Status: Accepted
+- Source: docs/audits/2026-05-06-spine-scaffold-3.md#question-1
+- Date accepted: 2026-05-06
+- Scope: commits 1d86bd9, fbc03eb, 83391b0 on main
+- Reasoning: The three commits are immutable artifacts of initial render.yaml deploy debugging during the bootstrap window. Force-pushing main to rewrite history is destructive (invalidates every downstream contributor's clone) and disproportionate to three tiny config tweaks with no runtime impact. CLAUDE.md §5 mandates PR squash-merges going forward, which authors the squash commit message deliberately and bounds this violation category at the merge boundary. The deploy-debugging window that produced these commits is closed.
+- Revisit when: A direct-push to main without a Conventional Commits prefix occurs after the PR squash-merge convention is established; or an audit finds the pattern repeating beyond the initial deploy-debugging window.
