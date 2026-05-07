@@ -1,6 +1,6 @@
 import { createServiceClient } from '@duly-noted/db';
 import { loadEnv } from './env.js';
-import { startHeartbeat } from './heartbeat.js';
+import { startPollLoop } from './poll-loop.js';
 
 async function main(): Promise<void> {
   console.log('worker starting');
@@ -18,12 +18,16 @@ async function main(): Promise<void> {
   }
   console.log('db reachable');
 
-  const heartbeat = startHeartbeat();
+  const handle = startPollLoop({
+    supabase,
+    supabaseUrl: env.SUPABASE_URL,
+    asrVendorApiKey: env.ASR_VENDOR_API_KEY,
+    asrWebhookSecret: env.ASR_WEBHOOK_SECRET,
+  });
 
   const shutdown = (signal: NodeJS.Signals): void => {
     console.log(`worker received ${signal}, shutting down`);
-    heartbeat.stop();
-    process.exit(0);
+    void handle.stop().then(() => process.exit(0));
   };
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);

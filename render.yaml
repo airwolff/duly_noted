@@ -1,16 +1,15 @@
 services:
   - type: worker
     name: duly-noted-worker
-    runtime: node
+    runtime: docker
     plan: starter
     region: oregon
     branch: main
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker build
-    startCommand: pnpm -F worker start
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
     envVars:
-      - key: NODE_VERSION
-        value: '24'
       - fromGroup: duly-noted-shared
+      - fromGroup: duly-noted-worker
 
   - type: cron
     name: duly-noted-worker-cron
@@ -18,19 +17,35 @@ services:
     plan: starter
     region: oregon
     branch: main
-    # TODO(stage-2): production schedule TBD per ingestion polling decision
-    schedule: '*/5 * * * *'
+    schedule: '0 * * * *'
     buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm -F worker-cron build
     startCommand: pnpm -F worker-cron start
     envVars:
       - key: NODE_VERSION
         value: '24'
       - fromGroup: duly-noted-shared
+      - fromGroup: duly-noted-cron
 
+# Secret values are populated via the Render dashboard after first deploy.
+# Per SPEC.md Stage 1 secrets matrix:
+#   - duly-noted-shared: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#   - duly-noted-worker: ASR_VENDOR_API_KEY, ASR_WEBHOOK_SECRET
+#   - duly-noted-cron:   YOUTUBE_API_KEY
+# The cron must NOT see ASR_VENDOR_API_KEY; the worker must NOT see YOUTUBE_API_KEY.
 envVarGroups:
   - name: duly-noted-shared
     envVars:
       - key: SUPABASE_URL
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+  - name: duly-noted-worker
+    envVars:
+      - key: ASR_VENDOR_API_KEY
+        sync: false
+      - key: ASR_WEBHOOK_SECRET
+        sync: false
+  - name: duly-noted-cron
+    envVars:
+      - key: YOUTUBE_API_KEY
         sync: false

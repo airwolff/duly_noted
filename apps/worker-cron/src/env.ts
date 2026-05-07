@@ -4,7 +4,7 @@ import { createEnvValidator } from '@duly-noted/shared';
 const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  YOUTUBE_API_KEY: z.string().min(1).optional(),
+  YOUTUBE_API_KEY: z.string().min(1),
 });
 
 export type WorkerCronEnv = z.infer<typeof schema>;

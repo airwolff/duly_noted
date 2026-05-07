@@ -87,7 +87,7 @@ supabase db reset                  # rebuild local DB from migrations + seed
 supabase functions serve           # run Edge Functions locally
 supabase functions deploy <name>   # deploy a single Edge Function
 supabase secrets set KEY=value     # set a secret on the Supabase project for Edge Functions
-docker build -t duly-noted-worker apps/worker  # build the worker container locally
+docker build -f apps/worker/Dockerfile -t duly-noted-worker .  # build the worker container locally (run from repo root)
 ```
 
 Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.

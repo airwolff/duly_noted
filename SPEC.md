@@ -57,6 +57,13 @@ Turborepo is **not** added at v1. Migration path is documented and ~30 minutes w
 
 Source of truth: Dashlane vault. No secrets in any repo.
 
+> **Matrix scope:** This table documents the _target v1 topology_ — the full
+> set of keys each surface will require when all stages are complete. Keys are
+> added to a surface's Zod env schema only in the slice that introduces the
+> consuming code. `ANTHROPIC_API_KEY` is listed as required on the worker
+> (Stage 4: segmentation and summarization); it is intentionally absent from
+> the worker's Slice 2 env schema and must not be added until Stage 4 lands.
+
 Per-surface secret list:
 
 | Secret                          | Cloudflare Pages | Render Worker | Render Cron | Supabase Edge Function |
@@ -67,7 +74,7 @@ Per-surface secret list:
 | `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         | yes (built-in)         |
 | `YOUTUBE_API_KEY`               | —                | —             | yes         | —                      |
 | `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes                    |
-| `ANTHROPIC_API_KEY`             | —                | yes           | —           | —                      |
+| `ANTHROPIC_API_KEY`             | —                | yes (Stage 4) | —           | —                      |
 | `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes                    |
 
 `ASR_WEBHOOK_SECRET` is set on the Render worker (which injects it as the `webhook_auth_header_value` in AssemblyAI submit calls) and on the Supabase Edge Function (which verifies the inbound `X-DulyNoted-Webhook` header against it). Cloudflare Pages does not touch the webhook flow.
@@ -164,16 +171,16 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 
 # Decision Record — Stage 2
 
-| #   | Decision                                                                | Alternatives weighed                                                                                  | Reason                                                                                                                                                              | Revisit when                                                                                       |
-| --- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| 2.1 | AssemblyAI Universal-3 Pro for ASR                                      | Deepgram Nova-3 ($0.46/hr base + diarization upcharge); AssemblyAI Universal-2 ($0.15/hr); self-hosted Whisper | Universal-3 Pro highest accuracy on accented English, rare words, alphanumerics. Diarization-included pricing simplest to model. Webhook + auth-header pattern well documented. | When ingest volume passes ~500 hrs/month and price delta vs Universal-2 becomes material           |
-| 2.2 | Webhook receiver as Supabase Edge Function, not Cloudflare Pages route  | Cloudflare Route Handler with anon key + permissive RLS on inbox table; Cloudflare → Edge Function chain | Edge Function holds service-role and vendor key safely; Cloudflare doesn't need either; eliminates inbox table; pipeline plumbing lives near the database, not on the static-site host | When Edge Function execution time becomes a constraint or Supabase pricing shifts                  |
+| #   | Decision                                                               | Alternatives weighed                                                                                           | Reason                                                                                                                                                                                 | Revisit when                                                                             |
+| --- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| 2.1 | AssemblyAI Universal-3 Pro for ASR                                     | Deepgram Nova-3 ($0.46/hr base + diarization upcharge); AssemblyAI Universal-2 ($0.15/hr); self-hosted Whisper | Universal-3 Pro highest accuracy on accented English, rare words, alphanumerics. Diarization-included pricing simplest to model. Webhook + auth-header pattern well documented.        | When ingest volume passes ~500 hrs/month and price delta vs Universal-2 becomes material |
+| 2.2 | Webhook receiver as Supabase Edge Function, not Cloudflare Pages route | Cloudflare Route Handler with anon key + permissive RLS on inbox table; Cloudflare → Edge Function chain       | Edge Function holds service-role and vendor key safely; Cloudflare doesn't need either; eliminates inbox table; pipeline plumbing lives near the database, not on the static-site host | When Edge Function execution time becomes a constraint or Supabase pricing shifts        |
 
 ---
 
 # Stage 3 — Audio extraction
 
-**Path: yt-dlp invoking the YouTube backend, executed in `apps/worker`.** Class A (caption-track retrieval) is closed off — YouTube API ToS classifies `captions.download` as channel-owner-OAuth-gated, and the 30-day data retention rule is incompatible with a permanent transcript archive. yt-dlp for *audio* extraction (then ASR via Stage 2) is the surviving path.
+**Path: yt-dlp invoking the YouTube backend, executed in `apps/worker`.** Class A (caption-track retrieval) is closed off — YouTube API ToS classifies `captions.download` as channel-owner-OAuth-gated, and the 30-day data retention rule is incompatible with a permanent transcript archive. yt-dlp for _audio_ extraction (then ASR via Stage 2) is the surviving path.
 
 **Container.** `apps/worker/Dockerfile` is a custom image based on `node:24-bookworm-slim` with:
 
@@ -204,6 +211,7 @@ AND title ~* boards.title_pattern
 ```
 
 For Lincolnville Select Board:
+
 - `title_pattern = 'select board'`
 - `min_duration_seconds = 600`
 
@@ -220,11 +228,11 @@ Town Meeting and Planning Board content on the same channel are separate board e
 
 # Decision Record — Stage 3
 
-| #   | Decision                                                            | Alternatives weighed                                                | Reason                                                                                                                                                              | Revisit when                                                                  |
-| --- | ------------------------------------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| 3.1 | yt-dlp via custom Dockerfile in `apps/worker`, static binary        | pip install at runtime; Node wrapper library                        | Reproducible image, no Python runtime in the container, version pinning explicit                                                                                    | When Render base-image build time becomes a constraint                        |
-| 3.2 | Per-board promotion rules as columns on `boards`                    | Hardcoded rule for the first board, refactor when board #2 lands    | Schema is tenant-ready by mandate; per-board rules match that posture; avoids a refactor when adding boards                                                         | Never expected to revisit                                                     |
-| 3.3 | Hourly cron schedule                                                | Every 5 min; daily; per-meeting-window                              | Hourly is predictable, cheap, and well within YouTube quota. No-missed-uploads-of-consequence at Lincolnville cadence (monthly meetings)                            | When ingest volume across all tenants makes hourly polling visibly wasteful   |
+| #   | Decision                                                     | Alternatives weighed                                             | Reason                                                                                                                                   | Revisit when                                                                |
+| --- | ------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 3.1 | yt-dlp via custom Dockerfile in `apps/worker`, static binary | pip install at runtime; Node wrapper library                     | Reproducible image, no Python runtime in the container, version pinning explicit                                                         | When Render base-image build time becomes a constraint                      |
+| 3.2 | Per-board promotion rules as columns on `boards`             | Hardcoded rule for the first board, refactor when board #2 lands | Schema is tenant-ready by mandate; per-board rules match that posture; avoids a refactor when adding boards                              | Never expected to revisit                                                   |
+| 3.3 | Hourly cron schedule                                         | Every 5 min; daily; per-meeting-window                           | Hourly is predictable, cheap, and well within YouTube quota. No-missed-uploads-of-consequence at Lincolnville cadence (monthly meetings) | When ingest volume across all tenants makes hourly polling visibly wasteful |
 
 ---
 
@@ -260,11 +268,24 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 - `youtube_channel_id text` (nullable; cron skips boards without one)
 - `title_pattern text` (nullable; Postgres `~*` regex; cron auto-promote rule)
 - `min_duration_seconds int default 0` (cron auto-promote rule)
-- `uploads_playlist_id text generated always as (replace(youtube_channel_id, 'UC', 'UU')) stored` (computed; eliminates a `channels.list` call per scan)
+- `uploads_playlist_id text generated always as ('UU' || substr(youtube_channel_id, 3)) stored` (computed; eliminates a `channels.list` call per scan). Paired with `CHECK (youtube_channel_id IS NULL OR youtube_channel_id LIKE 'UC%')` so the substr() expression always operates on a valid channel id. (`replace(youtube_channel_id, 'UC', 'UU')` was the original draft; replaced because `replace()` is global and would corrupt the playlist id if `UC` ever appeared mid-string.)
 
 **Meetings table additions:**
 
-- `youtube_id text not null` — promote to `unique`
+- `youtube_id text not null unique` — promoted to NOT NULL and UNIQUE in the Slice 2 follow-up migration (`slice_2_followup`).
+
+  > **Constraint intent note (triaged 2026-05-07):** The Slice 2 initial
+  > migration applied `UNIQUE(youtube_id)` globally. This is correct for
+  > single-board v1. When a second board targets the same YouTube channel
+  > (e.g., Planning Board on `@townoflincolnville`), the global constraint
+  > causes the cron's upsert to silently no-op on every video already owned
+  > by board #1, preventing board #2 from ever discovering its meetings. The
+  > intended long-term constraint is composite: `UNIQUE(board_id, youtube_id)`,
+  > accepting that the same video produces two `meetings` rows when multiple
+  > boards target the same channel. A follow-up migration changes the
+  > constraint when board #2 is added. See `_known-non-issues.md` NI-007
+  > and audit `2026-05-07-slice-2-ingestion.md` Q1.
+
 - `transcript_url text` (Storage path)
 - `audio_url text` (Storage path)
 - `asr_transcript_id text unique` (nullable; populated when worker submits)
@@ -286,11 +307,19 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 - `service_role` full access (paired with `GRANT ALL`)
 - `authenticated` SELECT where `status = 'published'` (paired with `GRANT SELECT`)
 
+  > **Pass-2 note (triaged 2026-05-07):** This policy has no tenant filter.
+  > Any authenticated user can read any published meeting regardless of
+  > publication membership. This is the SPEC-mandated pass-1 shape;
+  > membership-aware policies are deferred to pass 2. The tenant-boundary
+  > hole becomes load-bearing the moment a second publication onboards or
+  > authenticated reader UI ships — whichever comes first. See
+  > `_known-non-issues.md` NI-008.
+
 **Storage bucket:**
 
 - Create `meeting-artifacts` private bucket. Service-role unrestricted; no public read; signed URLs only for vendor handoff.
 
-Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns.
+Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns, membership-aware RLS.
 
 ---
 
@@ -310,10 +339,10 @@ Magic-link only. No passwords, no OAuth at v1.
 
 **Web env vars (Cloudflare Pages).**
 
-| Var                             | Purpose                                       |
-| ------------------------------- | --------------------------------------------- |
-| `NEXT_PUBLIC_SUPABASE_URL`      | Project URL (publishable)                     |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon publishable key. RLS enforces access.    |
+| Var                             | Purpose                                    |
+| ------------------------------- | ------------------------------------------ |
+| `NEXT_PUBLIC_SUPABASE_URL`      | Project URL (publishable)                  |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon publishable key. RLS enforces access. |
 
 The service-role key, the ASR vendor key, and the webhook secret never reach Cloudflare. Webhook receivers run on Supabase Edge Functions (Stage 2), not on the web app.
 
