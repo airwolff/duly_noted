@@ -60,9 +60,8 @@ Source of truth: Dashlane vault. No secrets in any repo.
 > **Matrix scope:** This table documents the _target v1 topology_ — the full
 > set of keys each surface will require when all stages are complete. Keys are
 > added to a surface's Zod env schema only in the slice that introduces the
-> consuming code. `ANTHROPIC_API_KEY` is listed as required on the worker
-> (Stage 4: segmentation and summarization); it is intentionally absent from
-> the worker's Slice 2 env schema and must not be added until Stage 4 lands.
+> consuming code. `ANTHROPIC_API_KEY` enters the worker's Zod env schema in
+> Slice 3 (segmentation pipeline; see Stage 4 below).
 
 Per-surface secret list:
 
@@ -74,7 +73,7 @@ Per-surface secret list:
 | `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         | yes (built-in)         |
 | `YOUTUBE_API_KEY`               | —                | —             | yes         | —                      |
 | `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes                    |
-| `ANTHROPIC_API_KEY`             | —                | yes (Stage 4) | —           | —                      |
+| `ANTHROPIC_API_KEY`             | —                | yes (Slice 3) | —           | —                      |
 | `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes                    |
 
 `ASR_WEBHOOK_SECRET` is set on the Render worker (which injects it as the `webhook_auth_header_value` in AssemblyAI submit calls) and on the Supabase Edge Function (which verifies the inbound `X-DulyNoted-Webhook` header against it). Cloudflare Pages does not touch the webhook flow.
@@ -127,8 +126,9 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
-- Stage 4: operator review step inclusion sets the `review` state semantics. Pending; Slice 2 keeps `review` in the enum but does not gate `review → published`.
-- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2 deltas in Stage 5 below cover the ingest-load-bearing subset; pass 2 still pending.
+- ~~Stage 4: segmentation methodology~~ — closed in Stage 4 below.
+- Operator review step inclusion sets the `review` state semantics. Pending; Slice 3 retains automatic advance through `segmenting → summarizing → review`, defers the `review → published` gate to the slice that builds the operator review UI.
+- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3 deltas in Stage 5 below cover the ingest+segmentation-load-bearing subset; pass 2 still pending.
 
 ---
 
@@ -173,12 +173,13 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 
 | #   | Decision                                                               | Alternatives weighed                                                                                           | Reason                                                                                                                                                                                 | Revisit when                                                                             |
 | --- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 2.1 | AssemblyAI Universal-3 Pro for ASR                                     | Deepgram Nova-3 ($0.46/hr base + diarization upcharge); AssemblyAI Universal-2 ($0.15/hr); self-hosted Whisper | Universal-3 Pro highest accuracy on accented English, rare words, alphanumerics. Diarization-included pricing simplest to model. Webhook + auth-header pattern well documented.        | When ingest volume passes ~500 hrs/month and price delta vs Universal-2 becomes material |
-| 2.2 | Webhook receiver as Supabase Edge Function, not Cloudflare Pages route | Cloudflare Route Handler with anon key + permissive RLS on inbox table; Cloudflare → Edge Function chain       | Edge Function holds service-role and vendor key safely; Cloudflare doesn't need either; eliminates inbox table; pipeline plumbing lives near the database, not on the static-site host | When Edge Function execution time becomes a constraint or Supabase pricing shifts        |
+| 2.1 | AssemblyAI Universal-3 Pro                                             | Deepgram Nova-3; Rev.ai; AWS Transcribe; OpenAI Whisper API                                                    | Diarization included; competitive WER on meeting-style audio (Earnings-21 ~8.8%); $0.21/hr cheapest with diarization in this tier; data opt-out available.                              | If WER on Maine accents proves materially worse than benchmarks suggest after smoke run. |
+| 2.2 | Async submit + webhook callback to Supabase Edge Function              | Polling from worker; webhook into apps/web                                                                     | Edge Function is the architecturally appropriate receiver: holds vendor key + service role together, no exposure to web app. Polling wastes cycles for jobs that take minutes to hours. | Never expected at v1 scale.                                                              |
+| 2.3 | `auto_chapters` and other vendor LLM add-ons disabled                  | Use AssemblyAI auto_chapters as Stage 4 baseline                                                               | Documented silent-500 risk on Universal-3 Pro. Chapter quality is the product; we own it via our own LLM pipeline.                                                                      | If Stage 4 pipeline cost exceeds projection by >5×.                                      |
 
 ---
 
-# Stage 3 — Audio extraction
+# Stage 3 — Audio extraction + cron discovery
 
 **Path: yt-dlp invoking the YouTube backend, executed in `apps/worker`.** Class A (caption-track retrieval) is closed off — YouTube API ToS classifies `captions.download` as channel-owner-OAuth-gated, and the 30-day data retention rule is incompatible with a permanent transcript archive. yt-dlp for _audio_ extraction (then ASR via Stage 2) is the surviving path.
 
@@ -233,6 +234,65 @@ Town Meeting and Planning Board content on the same channel are separate board e
 | 3.1 | yt-dlp via custom Dockerfile in `apps/worker`, static binary | pip install at runtime; Node wrapper library                     | Reproducible image, no Python runtime in the container, version pinning explicit                                                         | When Render base-image build time becomes a constraint                      |
 | 3.2 | Per-board promotion rules as columns on `boards`             | Hardcoded rule for the first board, refactor when board #2 lands | Schema is tenant-ready by mandate; per-board rules match that posture; avoids a refactor when adding boards                              | Never expected to revisit                                                   |
 | 3.3 | Hourly cron schedule                                         | Every 5 min; daily; per-meeting-window                           | Hourly is predictable, cheap, and well within YouTube quota. No-missed-uploads-of-consequence at Lincolnville cadence (monthly meetings) | When ingest volume across all tenants makes hourly polling visibly wasteful |
+
+---
+
+# Stage 4 — Segmentation
+
+**Method.** Three-step LLM pipeline adapted from Oberoi's March 2024 baseline (citymeetings.nyc).
+
+- **Step 1 — marker extraction.** Sequential transcript chunks (~8K tokens each) processed independently. LLM identifies start markers of one of the five marker types defined below, returning the T-token of the first sentence of each.
+- **Step 2 — chapter boundary determination.** Per marker, LLM is given the marker plus the transcript portion from that marker to the next. Returns the T-token of the chapter's last sentence.
+- **Step 3 — title and description generation.** Per chapter, LLM produces a marker-type-conditioned title and a 1–2 sentence description.
+
+Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no retry on schema-valid output. Multi-LLM consensus and claim grounding are explicit v2 deferrals (CLAUDE.md §7).
+
+**Methodology note.** Oberoi's current (post-summer 2024) production approach is operator section-marking + AI sub-marker extraction, requiring a custom review UI. The three-step automated pipeline used here is Oberoi's earlier (March 2024) baseline, which he acknowledged as overfit to NYC City Council meetings. Maine selectboard meetings are structurally simpler and more agenda-predictable; the automated baseline is sufficient for v1. The operator section-marking approach supersedes this when the slice that builds the operator review UI lands.
+
+**Marker taxonomy** (`marker_type` enum, per-board tunability deferred to pass 2):
+
+| Marker | Meaning |
+| --- | --- |
+| `AGENDA_ITEM` | Opening of an item from the published agenda |
+| `PUBLIC_COMMENT` | Start of a member of the public speaking |
+| `DISCUSSION` | Board-member discussion of an agenda item |
+| `VOTE` | Explicit verbal vote on a motion |
+| `PROCEDURE` | Call to order, adjournment, executive session entry/exit, roll call |
+
+**Timestamp scheme.** `[T{integer}]` synthetic tokens (Oberoi 3/3-corroborated approach). Real timestamps from AssemblyAI's `utterances[]` array (millisecond `start` field) are replaced with sequential `[T0]`, `[T1]`, `[T2]`… tokens injected ahead of every utterance in the LLM input. An out-of-band lookup table maps T-indices back to real timestamps. The LLM is instructed to reference and return only T-tokens. This eliminates the documented hallucination class where LLMs fabricate plausible-looking timestamps not present in the transcript. Token injection logic and lookup table builder live in `packages/shared/src/segmentation/t-tokens.ts`.
+
+**LLM.**
+
+- Model: `claude-opus-4-7` (Anthropic flagship as of 2026-04-16).
+- Tokenizer note: Opus 4.7 ships with an updated tokenizer that can produce up to ~35% more tokens for the same input text vs. Opus 4.6. Cost projections in this section are inflated accordingly.
+- List pricing (2026-05): $5/M input, $25/M output. Prompt caching reduces cached input to $0.50/M (90% off). Batch API: 50% off both legs.
+- API surface: `apps/worker` calls Anthropic SDK directly. `ANTHROPIC_API_KEY` enters the worker Zod env schema in Slice 3.
+
+**Output enforcement.** Anthropic native structured outputs (`output_config.format` with JSON schema, GA on Opus 4.7 / Sonnet 4.6 / Sonnet 4.5 / Opus 4.5 / Haiku 4.5). The `instructor` library Oberoi used with OpenAI is not a dependency. Constrained decoding guarantees schema conformance; it does not guarantee factual accuracy. Per CLAUDE.md §6, every LLM output is also Zod-validated before any DB write. JSON schemas live in `packages/shared/src/segmentation/schemas.ts`; Zod schemas mirror them. T-token validator: rejects any returned token not present in the lookup table for the meeting under processing.
+
+**State transition.** Worker picks up `meetings.status = 'segmenting'` with `SELECT … FOR UPDATE SKIP LOCKED`, runs the three-step pipeline, writes N rows to `segments` in a single transaction with `UPDATE meetings SET status = 'summarizing'`. No operator gate at this transition. The gate (if any) lands at `review → published` and is deferred to the operator review UI slice.
+
+**Failure modes.**
+
+- LLM returns a T-token not in the lookup table: Zod validator rejects, worker writes `status = 'failed'`, `last_error` captures the offending token, manual reset required.
+- LLM returns a chapter with `start_time_seconds >= end_time_seconds`: Zod validator rejects, same handling.
+- Anthropic API timeout or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
+- Empty `utterances[]` array in the transcript artifact: worker fails the row at pickup before any LLM call.
+- Step 2 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).
+
+**Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
+
+---
+
+# Decision Record — Stage 4
+
+| #   | Decision                                                                                  | Alternatives weighed                                                                                       | Reason                                                                                                                                                                                                                              | Revisit when                                                                                                                                |
+| --- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 4.1 | Adapted Oberoi three-step pipeline                                                        | Single-pass; operator section-marking + AI sub-extraction (Oberoi current); TreeSeg embedding clustering   | Three-step is 3/3-corroborated baseline. Single-pass was Oberoi's abandoned failure mode. Operator section-marking requires UI not built until later slice. TreeSeg unproven in production at this domain.                          | Operator review UI slice lands and operator section-marking becomes feasible; or segmentation quality plateaus below acceptable threshold. |
+| 4.2 | Maine marker taxonomy (`AGENDA_ITEM`, `PUBLIC_COMMENT`, `DISCUSSION`, `VOTE`, `PROCEDURE`) | Oberoi's NYC taxonomy (`QUESTION`, `TESTIMONY`, `REMARKS`, `PROCEDURE`); free-form LLM-chosen labels       | Maine selectboard structure differs from NYC City Council hearings. Predefined taxonomy is filterable in the reader UI, prevents label drift across boards, and isolates the FOAA-relevant moments (votes, public comment).         | A board with materially different structure onboards (e.g., school committee, planning board with site walks).                              |
+| 4.3 | `[T{integer}]` synthetic timestamp tokens                                                 | Real timestamp formats (`HH:MM:SS`); LLM-generated millisecond integers; trust diarized timestamps directly | Oberoi documented verbatim that real timestamp formats trigger hallucination of timestamps not in the transcript. Synthetic T-tokens with out-of-band lookup eliminate the class.                                                    | Never expected — failure mode is structural, not vendor-specific.                                                                           |
+| 4.4 | `claude-opus-4-7` as production model                                                     | Sonnet 4.6 (~40% lower input price, near-Opus quality on many tasks); Haiku 4.5; cross-vendor              | Cost delta vs. Sonnet at v1 volume is ~$15/year — trivial against the $408/year fixed cost baseline. First publisher-visible artifact; capability ceiling matters more than marginal cost. Oberoi's own guidance: capable models first. | Annual LLM spend exceeds $200 (multi-board scale) — evaluate Sonnet 4.6 substitution.                                                       |
+| 4.5 | Anthropic native structured outputs                                                       | `instructor` library + Pydantic; manual JSON parse + retry; tool-use coercion                              | Native structured outputs went GA on Opus 4.7 / Sonnet 4.6 / Haiku 4.5. Constrained decoding eliminates a third-party dependency and an entire retry surface. Zod validation on the write path remains per CLAUDE.md §6.            | Anthropic deprecates the API surface (unlikely).                                                                                            |
 
 ---
 
@@ -322,6 +382,64 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns, membership-aware RLS.
 
 Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `towns`, `boards` (surfaced post-audit by cron path against cloud Supabase). Remaining pass-2 work: full grant matrix for `authenticated` and `anon` paired with membership-aware RLS policies.
+
+## Slice 3 schema deltas
+
+Additive, single migration file `NNNN_slice_3_segmentation_schema.sql`, backwards-compatible with the previously deployed worker.
+
+**New table `segments`:**
+
+```sql
+create table public.segments (
+  id                  uuid primary key default gen_random_uuid(),
+  meeting_id          uuid not null references public.meetings(id) on delete cascade,
+  sequence_order      int  not null,
+  marker_type         text not null check (marker_type in (
+                        'AGENDA_ITEM', 'PUBLIC_COMMENT', 'DISCUSSION', 'VOTE', 'PROCEDURE'
+                      )),
+  title               text not null,
+  description         text not null,
+  start_time_seconds  int  not null check (start_time_seconds >= 0),
+  end_time_seconds    int  not null check (end_time_seconds > start_time_seconds),
+  transcript_excerpt  text not null,
+  created_at          timestamptz not null default now(),
+  updated_at          timestamptz not null default now(),
+  unique (meeting_id, sequence_order)
+);
+```
+
+**Indexes.**
+
+- `segments_meeting_id_idx` on `(meeting_id)` — FK side, reader-UI lookup.
+- The unique constraint `(meeting_id, sequence_order)` covers ordered iteration; no separate index needed.
+
+**Trigger.** `set_updated_at()` BEFORE UPDATE on `segments`.
+
+**RLS on `segments`** — enabled in the same migration that creates the table.
+
+- `service_role` full access, paired with `GRANT ALL ON segments TO service_role`.
+- `authenticated` SELECT where the parent meeting is `published`:
+
+  ```sql
+  create policy "authenticated read segments of published meetings"
+    on public.segments for select
+    to authenticated
+    using (exists (
+      select 1 from public.meetings m
+      where m.id = segments.meeting_id and m.status = 'published'
+    ));
+  ```
+
+  Paired with `GRANT SELECT ON segments TO authenticated`.
+
+  > **Pass-2 note:** Same tenant-boundary deferral as `meetings` (NI-008). Any
+  > authenticated user can read any published meeting's segments regardless of
+  > publication membership. Membership-aware policy lands in pass 2 alongside
+  > the meetings-table membership policy.
+
+**Storage bucket.** No new bucket. Segments live entirely in Postgres; no Storage artifact for segments at v1. (Search slice will add pgvector + tsvector columns in pass 2.)
+
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments`, membership-aware RLS on every table.
 
 ---
 
