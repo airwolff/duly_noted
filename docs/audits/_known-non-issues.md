@@ -84,3 +84,27 @@ keep the entry — do not delete. The history is the value.
 - Scope: commits 1d86bd9, fbc03eb, 83391b0 on main
 - Reasoning: The three commits are immutable artifacts of initial render.yaml deploy debugging during the bootstrap window. Force-pushing main to rewrite history is destructive (invalidates every downstream contributor's clone) and disproportionate to three tiny config tweaks with no runtime impact. CLAUDE.md §5 mandates PR squash-merges going forward, which authors the squash commit message deliberately and bounds this violation category at the merge boundary. The deploy-debugging window that produced these commits is closed.
 - Revisit when: A direct-push to main without a Conventional Commits prefix occurs after the PR squash-merge convention is established; or an audit finds the pattern repeating beyond the initial deploy-debugging window.
+
+## NI-007: meetings.youtube_id UNIQUE not yet promoted to (board_id, youtube_id) composite
+- Status: Accepted
+- Source: docs/audits/2026-05-07-slice-2-ingestion.md#question-1
+- Date accepted: 2026-05-08
+- Scope: supabase/migrations/ (slice_2_ingestion + slice_2_followup), meetings table UNIQUE constraint
+- Reasoning: One publication, one town, one board at v1. A bare UNIQUE on `youtube_id` is sufficient because exactly one board feeds the table. The composite shape reflects the locked tenant-ready schema's intent but adds no enforcement value before a second board exists. Forcing the constraint shape change before there's a constraint problem to solve is plumbing for an unrealized future.
+- Revisit when: a second `boards` row is created (same or different publication). That condition forces the constraint reshape — `(board_id, youtube_id)` UNIQUE replaces the bare UNIQUE in the same migration that inserts the second board.
+
+## NI-008: meetings RLS authenticated SELECT lacks per-publication tenant filter
+- Status: Accepted
+- Source: docs/audits/2026-05-07-slice-2-ingestion.md#question-4
+- Date accepted: 2026-05-08
+- Scope: supabase/migrations/slice_2_ingestion, meetings RLS policy for authenticated role
+- Reasoning: Single-publication configuration at v1. Every authenticated user belongs to the only publication, so a `publication_id IN (SELECT ... FROM memberships WHERE user_id = auth.uid())` predicate evaluates trivially true and adds zero defense in depth. The locked schema already carries the publication chain (`meetings.board_id → boards.town_id → towns.publication_id`); the predicate can be added in one migration when it gains an enforcement role.
+- Revisit when: a second publication onboards, OR an authenticated reader UI ships that could expose `meetings` rows across publications. Either reaches the predicate's first non-trivial evaluation.
+
+## NI-009: packages/shared schemas not yet imported by Edge Functions
+- Status: Accepted
+- Source: Carry-forward from 2026-05-07 triage handoff; not raised as a Finding or Question in either audit
+- Date accepted: 2026-05-08
+- Scope: packages/shared/src/, supabase/functions/asr-webhook/
+- Reasoning: One Edge Function at v1. The shared-package value is consistency across multiple consumers; with a single consumer, duplicating the small JSON shape inline avoids wiring a Deno-compatible import path for an npm-workspace package, which is non-trivial under Supabase Edge Functions' module resolution.
+- Revisit when: a second Edge Function lands that needs the same shapes (inbound public API, second webhook receiver, signed-URL minter). At that point the duplication cost crosses the import-wiring cost and shared imports become correct.
