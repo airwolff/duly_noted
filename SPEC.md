@@ -144,7 +144,7 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 **Submit pattern.** Async with webhook callback, called from `apps/worker`:
 
 - `POST https://api.assemblyai.com/v2/transcript`
-- Body: `{ audio_url, speaker_labels: true, webhook_url, webhook_auth_header_name: "X-DulyNoted-Webhook", webhook_auth_header_value: ASR_WEBHOOK_SECRET }`
+- Body: `{ audio_url, speaker_labels: true, speech_models: ['universal-3-pro'], webhook_url, webhook_auth_header_name: "X-DulyNoted-Webhook", webhook_auth_header_value: ASR_WEBHOOK_SECRET }`. Required by AssemblyAI's current API; submits without `speech_models` return 400 with `"speech_models" must be a non-empty list`.
 - `audio_url` is a Supabase Storage signed URL with 1-hour TTL
 - `webhook_url` points at the Supabase Edge Function: `https://{project-ref}.supabase.co/functions/v1/asr-webhook`
 - `auto_chapters` is **disabled**. Known SINGLE-SOURCE risk of silent 500s on Universal-3 Pro; chapter generation is downstream Stage 4 work using our own LLM pipeline.
@@ -320,6 +320,8 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 - Create `meeting-artifacts` private bucket. Service-role unrestricted; no public read; signed URLs only for vendor handoff.
 
 Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns, membership-aware RLS.
+
+Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `towns`, `boards` (surfaced post-audit by cron path against cloud Supabase). Remaining pass-2 work: full grant matrix for `authenticated` and `anon` paired with membership-aware RLS policies.
 
 ---
 

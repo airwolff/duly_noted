@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --env-file=.env.local src/index.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "vitest run"

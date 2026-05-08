@@ -62,6 +62,7 @@ describe('buildAssemblyAISubmitBody', () => {
     expect(body).toEqual({
       audio_url: 'https://signed.example/audio.opus',
       speaker_labels: true,
+      speech_models: ['universal-3-pro'],
       webhook_url: 'https://abc.supabase.co/functions/v1/asr-webhook',
       webhook_auth_header_name: 'X-DulyNoted-Webhook',
       webhook_auth_header_value: 'shhh',

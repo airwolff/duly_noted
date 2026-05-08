@@ -35,6 +35,7 @@ export type AssemblyAITranscript = z.infer<typeof assemblyAITranscriptSchema>;
 export interface AssemblyAISubmitBody {
   audio_url: string;
   speaker_labels: true;
+  speech_models: ['universal-3-pro'];
   webhook_url: string;
   webhook_auth_header_name: 'X-DulyNoted-Webhook';
   webhook_auth_header_value: string;
@@ -56,6 +57,7 @@ export function buildAssemblyAISubmitBody(args: BuildSubmitBodyArgs): AssemblyAI
   return {
     audio_url: args.audioUrl,
     speaker_labels: true,
+    speech_models: ['universal-3-pro'],
     webhook_url: args.webhookUrl,
     webhook_auth_header_name: 'X-DulyNoted-Webhook',
     webhook_auth_header_value: args.webhookSecret,
