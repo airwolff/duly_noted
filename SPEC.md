@@ -16,8 +16,8 @@ Postgres is the queue. The Render worker advances meeting state by polling rows 
 State machine on `meetings.status`:
 
 ```
-discovered → pending → extracting → transcribing → segmenting → summarizing → review → published
-                                                                              ↘  failed
+discovered → pending → extracting → transcribing → segmenting → chaptering → summarizing → review → published
+                                                                                           ↘  failed
 ```
 
 - **Cron Job** writes new `discovered` rows from YouTube Data API responses, then auto-promotes to `pending` based on per-board title pattern + minimum duration.
@@ -233,6 +233,8 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 
 **Timestamp scheme.** `[T{integer}]` synthetic tokens (Oberoi 3/3-corroborated approach). Real timestamps from AssemblyAI's `utterances[]` array (millisecond `start` field) are replaced with sequential `[T0]`, `[T1]`, `[T2]`… tokens injected ahead of every utterance in the LLM input. An out-of-band lookup table maps T-indices back to real timestamps. The LLM is instructed to reference and return only T-tokens. This eliminates the documented hallucination class where LLMs fabricate plausible-looking timestamps not present in the transcript. Token injection logic and lookup table builder live in `packages/shared/src/segmentation/t-tokens.ts`.
 
+**Chunking.** `CHUNK_MAX_CHARS = 24_000` is the intentional conservative target (~6.5K tokens at ~3.7 chars/token average). The ~20% margin under the nominal 8K-token-per-chunk budget guards against tokenizer variance (the ~35% Opus 4.7 inflation noted below) and ensures the system prompt + chunk + structured output overhead stays well within the model's input window. Cost overhead at v1 volume (~24 meetings/year, ~12 chunks/meeting) is negligible.
+
 **LLM.**
 
 - Model: `claude-opus-4-7` (Anthropic flagship as of 2026-04-16).
@@ -247,10 +249,11 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 **Failure modes.**
 
 - LLM returns a T-token not in the lookup table: Zod validator rejects, worker writes `status = 'failed'`, `last_error` captures the offending token, manual reset required.
-- LLM returns a chapter with `start_time_seconds >= end_time_seconds`: Zod validator rejects, same handling.
+- Sub-second utterance rounding can produce `Math.floor(startUtt.start / 1000) === Math.ceil(endUtt.end / 1000)` at the worker's T-token-to-seconds resolution step. The worker coerces `endSec = startSec + 1` to satisfy the `end_time_seconds > start_time_seconds` CHECK constraint and emits a `logger.warn` with the meeting id, segment `sequence_order`, and original millisecond bounds. The row does not fail. (Under the T-token scheme the LLM never emits seconds; this artifact is purely worker-side.)
 - Anthropic API timeout or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
 - Empty `utterances[]` array in the transcript artifact: worker fails the row at pickup before any LLM call.
 - Step 2 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).
+- Step 1 returns zero markers across every chunk of the transcript: meeting fails (`status = 'failed'`, `last_error` records the empty-marker condition, manual reset required). Per-chunk zero markers remains acceptable (above); full-transcript zero indicates an ASR or pipeline fault. A real meeting always produces at least one `PROCEDURE` marker (call-to-order, adjournment).
 
 **Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
 
@@ -273,7 +276,7 @@ The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) r
 | `meetings`         | The pipeline state row                         | `id uuid pk`, `board_id uuid fk`, `status meeting_status` (default `'discovered'`), `youtube_id text`, `meeting_date date`, `last_error text`, `created_at`, `updated_at` |
 | `memberships`      | User ↔ publication join with role              | `user_id uuid → auth.users`, `publication_id uuid fk`, `role text check in ('reader','editor','admin')`, unique `(user_id, publication_id)`                               |
 
-**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, summarizing, review, published, failed`.
+**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, chaptering, summarizing, review, published, failed`.
 
 **Identity.** No `public.users` table. `auth.users` is canonical; `memberships.user_id` joins against it directly. A `public.profiles` table can be added in pass 2 if profile fields land on the roadmap.
 
@@ -348,6 +351,8 @@ Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `town
 ## Slice 3 schema deltas
 
 Additive, single migration file `NNNN_slice_3_segmentation_schema.sql`, backwards-compatible with the previously deployed worker.
+
+**Enum addition.** `public.meeting_status` gains `'chaptering'`, positioned between `'segmenting'` and `'summarizing'`. This is a transient state held only while LLM work runs outside Postgres (Step 1 marker extraction → Step 2 chapter boundaries → Step 3 title/description). It is structurally identical to the Slice 2 `'extracting'` transient — both are forced by Postgres (a transaction cannot remain open across a multi-minute LLM call) and gate re-claim by other workers via the status filter on `claim_segmenting_meeting`. The `complete_segmentation` RPC atomically performs INSERT-N-segments + `UPDATE meetings SET status = 'summarizing'`, satisfying the Stage 4 "single transaction" constraint at the data-write boundary.
 
 **New table `segments`:**
 
