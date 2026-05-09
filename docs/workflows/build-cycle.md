@@ -29,9 +29,10 @@ the ingestion pipeline, the search layer — moves through these steps:
 
 1. **Plan** (here)
    Discuss scope using current SPEC.md, CLAUDE.md, prior audits,
-   _known-non-issues.md, and the research KB docs. Output: a
-   description of what Slice N covers and any SPEC.md or CLAUDE.md
-   amendments it requires.
+   _known-non-issues.md, the research KB docs, and any specific
+   ADR being revisited. Output: a description of what Slice N
+   covers and any SPEC.md, CLAUDE.md, or ADR amendments it
+   requires.
 
 2. **Update SPEC.md and CLAUDE.md if needed**
    Copy amended content from this project to the repo, or have
@@ -74,27 +75,35 @@ the ingestion pipeline, the search layer — moves through these steps:
 
 | Artifact | Location | Purpose | Update cadence |
 |---|---|---|---|
-| `SPEC.md` | repo root | The system as designed | Amended per slice when scope adds new concepts |
+| `SPEC.md` | repo root | Active architecture, schema state, open items | Amended per slice when scope adds new concepts |
 | `CLAUDE.md` | repo root + per-dir | Rules audits check against | Amended when conventions change |
 | `docs/audits/<date>-<slug>.md` | per audit | Findings from one audit run | Append-only; one file per audit |
 | `docs/audits/_known-non-issues.md` | one file | Registry of accepted wont-fixes | Append-only; entries get promoted out |
 | `docs/audits/README.md` | one file | Audit directory convention | Rare updates |
-| `docs/adr/NNNN-<slug>.md` | when added | Architecture decisions | One file per decision; superseded, never edited |
+| `docs/adr/NNNN-<slug>.md` | one per locked decision | Locked architectural decisions, MADR format | One file per decision; superseded, never edited |
 | `docs/workflows/build-cycle.md` | this file | The workflow itself | Updated when the workflow changes |
 
 ## When SPEC.md changes
+
+`SPEC.md` holds active architecture, schema state, and open items.
+Locked architectural decisions live in `docs/adr/` (one file per
+decision, MADR format) and are referenced from `SPEC.md` by pointer,
+not duplicated in it.
 
 Amend SPEC.md when:
 - A new slice introduces concepts the spec didn't cover
 - A wont-fix in `_known-non-issues.md` becomes a permanent stance
   and gets promoted into the spec
-- An ADR is accepted and the spec needs to reflect or reference it
+- An ADR is accepted and the spec needs a pointer to it
 - A bug fix reveals the spec was wrong
 
 Do NOT amend SPEC.md for:
 - Routine bug fixes that align with existing spec
 - Refactors that don't change behavior
 - Internal implementation details
+- New locked decisions — those become a new ADR under `docs/adr/`,
+  with `SPEC.md` updated only if the decision changes active
+  architecture or schema state.
 
 ## When CLAUDE.md changes
 
