@@ -108,11 +108,9 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 
 `kb_civic-sunlight-mvp-cost-model_2026-04-29_v1.xml` is built on a Vercel + Supabase Pro assumption. The Stage 1 decision moves hosting to Cloudflare Pages and adds a Render line. Net annual fixed cost moves from ~$540/yr to ~$408/yr. The model's CONFLICT-06 (Vercel ToS) and SS-03 are no longer load-bearing. CONFLICT-07 (Supabase Pro inactivity pause) still binds. The cost model file remains the authoritative reference for ASR and LLM lines, with the additional ASR-vendor binding established in Stage 2.
 
-## Locked decisions
+**Locked decisions:** see ADR 0001 (Render Background Worker for the pipeline) and ADRs 0002–0007 for the remaining Stage 1 decisions.
 
-See ADR 0001 (Render Background Worker for the pipeline) and ADRs 0002–0007 for the remaining Stage 1 decisions.
-
-## Open items inherited by later stages
+**Open items inherited by later stages:**
 
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
@@ -157,9 +155,7 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 
 **Cost expectation at v1 scale.** Lincolnville Select Board meets ~24×/year. At ~2 hr/meeting, ~48 hr/year ≈ $10/year ASR variable cost. Bounded.
 
-## Locked decisions
-
-See ADRs 0008–0010.
+**Locked decisions:** see ADRs 0008–0010.
 
 ---
 
@@ -209,9 +205,7 @@ Town Meeting and Planning Board content on the same channel are separate board e
 - Video unavailable / private / removed: `meetings.status = 'failed'`, `last_error` records yt-dlp stderr, manual reset required.
 - AssemblyAI submission rejected: same handling — `status = 'failed'`, vendor error in `last_error`.
 
-## Locked decisions
-
-See ADRs 0011–0013. ADR 0019 covers the residential-proxy egress path layered on top of the yt-dlp extraction decision.
+**Locked decisions:** see ADRs 0011–0013. ADR 0019 covers the residential-proxy egress path layered on top of the yt-dlp extraction decision.
 
 ---
 
@@ -260,9 +254,7 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 
 **Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
 
-## Locked decisions
-
-See ADRs 0014–0018.
+**Locked decisions:** see ADRs 0014–0018.
 
 ---
 
