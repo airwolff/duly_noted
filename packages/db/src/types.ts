@@ -11,6 +11,7 @@ export type MeetingStatus =
   | 'extracting'
   | 'transcribing'
   | 'segmenting'
+  | 'chaptering'
   | 'summarizing'
   | 'review'
   | 'published'
@@ -191,6 +192,48 @@ export interface Database {
         };
         Relationships: [];
       };
+      segments: {
+        Row: {
+          id: string;
+          meeting_id: string;
+          sequence_order: number;
+          marker_type: 'AGENDA_ITEM' | 'PUBLIC_COMMENT' | 'DISCUSSION' | 'VOTE' | 'PROCEDURE';
+          title: string;
+          description: string;
+          start_time_seconds: number;
+          end_time_seconds: number;
+          transcript_excerpt: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          meeting_id: string;
+          sequence_order: number;
+          marker_type: 'AGENDA_ITEM' | 'PUBLIC_COMMENT' | 'DISCUSSION' | 'VOTE' | 'PROCEDURE';
+          title: string;
+          description: string;
+          start_time_seconds: number;
+          end_time_seconds: number;
+          transcript_excerpt: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          meeting_id?: string;
+          sequence_order?: number;
+          marker_type?: 'AGENDA_ITEM' | 'PUBLIC_COMMENT' | 'DISCUSSION' | 'VOTE' | 'PROCEDURE';
+          title?: string;
+          description?: string;
+          start_time_seconds?: number;
+          end_time_seconds?: number;
+          transcript_excerpt?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<string, never>;
     Functions: {
@@ -207,6 +250,18 @@ export interface Database {
       auto_promote_for_board: {
         Args: { p_board_id: string };
         Returns: number;
+      };
+      claim_segmenting_meeting: {
+        Args: Record<string, never>;
+        Returns: {
+          id: string;
+          transcript_url: string | null;
+          duration_seconds: number | null;
+        }[];
+      };
+      complete_segmentation: {
+        Args: { p_meeting_id: string; p_segments: Json };
+        Returns: void;
       };
     };
     Enums: {
