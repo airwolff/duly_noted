@@ -142,4 +142,48 @@ describe('fetchVideoDetails', () => {
     const ids = Array.from({ length: 51 }, (_, i) => `vid${i}`);
     await expect(fetchVideoDetails({ apiKey: 'K', videoIds: ids })).rejects.toThrow(/50/);
   });
+
+  it('skips items with unparseable durations and logs the offender, without failing the call', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              id: 'good',
+              snippet: { title: 'Select Board 2026-04-15', channelId: 'UCabc' },
+              contentDetails: { duration: 'PT1H15M' },
+            },
+            {
+              id: 'live',
+              snippet: { title: 'LIVE: Town Meeting', channelId: 'UCabc' },
+              contentDetails: { duration: 'P0D' },
+            },
+            {
+              id: 'broken',
+              snippet: { title: 'Garbage', channelId: 'UCabc' },
+              contentDetails: { duration: 'WHATEVER' },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const details = await fetchVideoDetails({
+      apiKey: 'K',
+      videoIds: ['good', 'live', 'broken'],
+    });
+
+    expect(details).toHaveLength(2);
+    expect(details.map((d) => d.id)).toEqual(['good', 'live']);
+    expect(details[0]?.durationSeconds).toBe(4500);
+    expect(details[1]?.durationSeconds).toBe(0);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/videoId=broken/);
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/duration=WHATEVER/);
+
+    warnSpy.mockRestore();
+  });
 });

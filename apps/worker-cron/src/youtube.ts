@@ -130,10 +130,24 @@ export async function fetchVideoDetails(args: FetchVideoDetailsArgs): Promise<Vi
   }
   const json: unknown = await response.json();
   const parsed = videosResponseSchema.parse(json);
-  return parsed.items.map((item) => ({
-    id: item.id,
-    title: item.snippet.title,
-    channelId: item.snippet.channelId,
-    durationSeconds: parseIsoDuration(item.contentDetails.duration),
-  }));
+  // Per-video parse errors are logged and skipped; one bad duration must
+  // not fail the board scan or exit the cron nonzero.
+  return parsed.items
+    .map((item): VideoDetail | null => {
+      try {
+        return {
+          id: item.id,
+          title: item.snippet.title,
+          channelId: item.snippet.channelId,
+          durationSeconds: parseIsoDuration(item.contentDetails.duration),
+        };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `youtube videos.list: skipping videoId=${item.id} duration=${item.contentDetails.duration} (${message})`,
+        );
+        return null;
+      }
+    })
+    .filter((d): d is VideoDetail => d !== null);
 }
