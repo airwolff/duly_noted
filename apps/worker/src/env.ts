@@ -6,6 +6,7 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   ASR_VENDOR_API_KEY: z.string().min(1),
   ASR_WEBHOOK_SECRET: z.string().min(1),
+  ANTHROPIC_API_KEY: z.string().min(1),
 });
 
 export type WorkerEnv = z.infer<typeof schema>;
