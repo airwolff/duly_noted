@@ -108,21 +108,11 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 
 `kb_civic-sunlight-mvp-cost-model_2026-04-29_v1.xml` is built on a Vercel + Supabase Pro assumption. The Stage 1 decision moves hosting to Cloudflare Pages and adds a Render line. Net annual fixed cost moves from ~$540/yr to ~$408/yr. The model's CONFLICT-06 (Vercel ToS) and SS-03 are no longer load-bearing. CONFLICT-07 (Supabase Pro inactivity pause) still binds. The cost model file remains the authoritative reference for ASR and LLM lines, with the additional ASR-vendor binding established in Stage 2.
 
----
+## Locked decisions
 
-# Decision Record — Stage 1
+See ADR 0001 (Render Background Worker for the pipeline) and ADRs 0002–0007 for the remaining Stage 1 decisions.
 
-| #   | Decision                                                         | Alternatives weighed                                                            | Reason                                                                                                                                                                                                                | Revisit when                                                                                                                 |
-| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| 1.1 | Cloudflare Pages for web                                         | Vercel                                                                          | Vercel Hobby ToS forbids commercial use; Pro $20/mo. Cloudflare free tier permits commercial. ~$240/yr saved.                                                                                                         | Never expected to revisit at v1 scale.                                                                                       |
-| 1.2 | Render Background Worker for pipeline                            | Cloudflare Workers + Queues; Supabase Edge Functions + pg_cron; Fly.io; Railway | yt-dlp/ffmpeg require a real Linux shell. Workers and Edge Functions cannot shell out. Render's Background Worker + Cron primitives map directly to ingestion and pipeline; predictable pricing; solo-dev ergonomics. | If Render pricing shifts materially or if v2 introduces tasks (e.g., local Whisper) that exceed Starter container resources. |
-| 1.3 | Postgres-as-queue (no Redis/SQS)                                 | Cloudflare Queues; Upstash Redis; SQS                                           | Volume is ~6 meetings/day at Scale-1 ceiling. Polling on `meetings.status` is sufficient. Adding a queue service is premature complexity.                                                                             | If concurrent meeting throughput exceeds ~10/hr or if multi-publication tenancy requires fairness across tenants.            |
-| 1.4 | Monorepo with pnpm workspaces                                    | Two separate repos; pnpm + Turborepo                                            | Two-app deployment forces shared types and a shared DB client. pnpm workspaces is the minimum viable monorepo. Turborepo migration is cheap when needed.                                                              | When CI runtime exceeds ~3 minutes consistently.                                                                             |
-| 1.5 | Dashlane as secrets source of truth                              | GitHub Secrets only; SOPS/age in repo; Doppler/Infisical                        | Manual but auditable. No additional vendor. Encrypted-in-repo overkill for a solo dev with ~10 keys.                                                                                                                  | When team grows beyond one or rotation cadence exceeds quarterly.                                                            |
-| 1.6 | Cloudflare/Render git auto-deploy + GitHub Actions for PR checks | Manual deploy; full GitHub-Actions-driven deploy                                | Native git integrations cover the common path. GitHub Actions handles only typecheck/lint/test/migrations.                                                                                                            | When per-environment promotion (staging → prod) becomes necessary.                                                           |
-| 1.7 | Migrations via GitHub Action, not worker boot                    | Run migrations on worker startup; manual migration                              | Keeps schema concerns off the runtime path. Forward-only migrations match Supabase's recommended pattern.                                                                                                             | When zero-downtime requirements force pre/post-deploy migration phasing.                                                     |
-
-**Open items inherited by later stages:**
+## Open items inherited by later stages
 
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
@@ -167,15 +157,9 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 
 **Cost expectation at v1 scale.** Lincolnville Select Board meets ~24×/year. At ~2 hr/meeting, ~48 hr/year ≈ $10/year ASR variable cost. Bounded.
 
----
+## Locked decisions
 
-# Decision Record — Stage 2
-
-| #   | Decision                                                  | Alternatives weighed                                        | Reason                                                                                                                                                                                  | Revisit when                                                                             |
-| --- | --------------------------------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| 2.1 | AssemblyAI Universal-3 Pro                                | Deepgram Nova-3; Rev.ai; AWS Transcribe; OpenAI Whisper API | Diarization included; competitive WER on meeting-style audio (Earnings-21 ~8.8%); $0.21/hr cheapest with diarization in this tier; data opt-out available.                              | If WER on Maine accents proves materially worse than benchmarks suggest after smoke run. |
-| 2.2 | Async submit + webhook callback to Supabase Edge Function | Polling from worker; webhook into apps/web                  | Edge Function is the architecturally appropriate receiver: holds vendor key + service role together, no exposure to web app. Polling wastes cycles for jobs that take minutes to hours. | Never expected at v1 scale.                                                              |
-| 2.3 | `auto_chapters` and other vendor LLM add-ons disabled     | Use AssemblyAI auto_chapters as Stage 4 baseline            | Documented silent-500 risk on Universal-3 Pro. Chapter quality is the product; we own it via our own LLM pipeline.                                                                      | If Stage 4 pipeline cost exceeds projection by >5×.                                      |
+See ADRs 0008–0010.
 
 ---
 
@@ -225,15 +209,9 @@ Town Meeting and Planning Board content on the same channel are separate board e
 - Video unavailable / private / removed: `meetings.status = 'failed'`, `last_error` records yt-dlp stderr, manual reset required.
 - AssemblyAI submission rejected: same handling — `status = 'failed'`, vendor error in `last_error`.
 
----
+## Locked decisions
 
-# Decision Record — Stage 3
-
-| #   | Decision                                                     | Alternatives weighed                                             | Reason                                                                                                                                   | Revisit when                                                                |
-| --- | ------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 3.1 | yt-dlp via custom Dockerfile in `apps/worker`, static binary | pip install at runtime; Node wrapper library                     | Reproducible image, no Python runtime in the container, version pinning explicit                                                         | When Render base-image build time becomes a constraint                      |
-| 3.2 | Per-board promotion rules as columns on `boards`             | Hardcoded rule for the first board, refactor when board #2 lands | Schema is tenant-ready by mandate; per-board rules match that posture; avoids a refactor when adding boards                              | Never expected to revisit                                                   |
-| 3.3 | Hourly cron schedule                                         | Every 5 min; daily; per-meeting-window                           | Hourly is predictable, cheap, and well within YouTube quota. No-missed-uploads-of-consequence at Lincolnville cadence (monthly meetings) | When ingest volume across all tenants makes hourly polling visibly wasteful |
+See ADRs 0011–0013. ADR 0019 covers the residential-proxy egress path layered on top of the yt-dlp extraction decision.
 
 ---
 
@@ -282,17 +260,9 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 
 **Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
 
----
+## Locked decisions
 
-# Decision Record — Stage 4
-
-| #   | Decision                                                                                   | Alternatives weighed                                                                                        | Reason                                                                                                                                                                                                                                  | Revisit when                                                                                                                               |
-| --- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| 4.1 | Adapted Oberoi three-step pipeline                                                         | Single-pass; operator section-marking + AI sub-extraction (Oberoi current); TreeSeg embedding clustering    | Three-step is 3/3-corroborated baseline. Single-pass was Oberoi's abandoned failure mode. Operator section-marking requires UI not built until later slice. TreeSeg unproven in production at this domain.                              | Operator review UI slice lands and operator section-marking becomes feasible; or segmentation quality plateaus below acceptable threshold. |
-| 4.2 | Maine marker taxonomy (`AGENDA_ITEM`, `PUBLIC_COMMENT`, `DISCUSSION`, `VOTE`, `PROCEDURE`) | Oberoi's NYC taxonomy (`QUESTION`, `TESTIMONY`, `REMARKS`, `PROCEDURE`); free-form LLM-chosen labels        | Maine selectboard structure differs from NYC City Council hearings. Predefined taxonomy is filterable in the reader UI, prevents label drift across boards, and isolates the FOAA-relevant moments (votes, public comment).             | A board with materially different structure onboards (e.g., school committee, planning board with site walks).                             |
-| 4.3 | `[T{integer}]` synthetic timestamp tokens                                                  | Real timestamp formats (`HH:MM:SS`); LLM-generated millisecond integers; trust diarized timestamps directly | Oberoi documented verbatim that real timestamp formats trigger hallucination of timestamps not in the transcript. Synthetic T-tokens with out-of-band lookup eliminate the class.                                                       | Never expected — failure mode is structural, not vendor-specific.                                                                          |
-| 4.4 | `claude-opus-4-7` as production model                                                      | Sonnet 4.6 (~40% lower input price, near-Opus quality on many tasks); Haiku 4.5; cross-vendor               | Cost delta vs. Sonnet at v1 volume is ~$15/year — trivial against the $408/year fixed cost baseline. First publisher-visible artifact; capability ceiling matters more than marginal cost. Oberoi's own guidance: capable models first. | Annual LLM spend exceeds $200 (multi-board scale) — evaluate Sonnet 4.6 substitution.                                                      |
-| 4.5 | Anthropic native structured outputs                                                        | `instructor` library + Pydantic; manual JSON parse + retry; tool-use coercion                               | Native structured outputs went GA on Opus 4.7 / Sonnet 4.6 / Haiku 4.5. Constrained decoding eliminates a third-party dependency and an entire retry surface. Zod validation on the write path remains per CLAUDE.md §6.                | Anthropic deprecates the API surface (unlikely).                                                                                           |
+See ADRs 0014–0018.
 
 ---
 
