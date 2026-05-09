@@ -9,10 +9,13 @@ import { extractAudio } from './extract.js';
 import { uploadAudio, signAudioUrl } from './upload.js';
 import { submitToAssemblyAI } from './asr-submit.js';
 import { markFailed } from './fail.js';
+import type { CallStructured } from './anthropic.js';
+import { runSegmentationOnce } from './segment.js';
 
 export type RunOutcome =
   | { kind: 'idle' }
   | { kind: 'submitted'; meetingId: string; transcriptId: string }
+  | { kind: 'segmented'; meetingId: string; segmentCount: number }
   | { kind: 'failed'; meetingId: string; message: string };
 
 export interface RunDeps {
@@ -20,15 +23,29 @@ export interface RunDeps {
   supabaseUrl: string;
   asrVendorApiKey: string;
   asrWebhookSecret: string;
+  callStructured: CallStructured;
 }
 
 /**
- * Run the worker pipeline for a single claimed meeting. Idle when no
- * pending row is available. On any error after claim, the meeting is
- * marked failed and the function returns; per CLAUDE.md §7 there is no
- * automatic retry.
+ * Run the worker pipeline for a single tick. Tries segmenting rows first
+ * (closer to publication, so older work moves through the pipeline rather
+ * than starving behind newer pending rows); falls back to pending ingest
+ * rows if no segmenting work is claimable; idle if neither has work. On
+ * any error after a claim, the meeting is marked failed and the tick
+ * returns; per CLAUDE.md §7 there is no automatic retry.
  */
 export async function runPipelineOnce(deps: RunDeps): Promise<RunOutcome> {
+  const segmentOutcome = await runSegmentationOnce({
+    supabase: deps.supabase,
+    callStructured: deps.callStructured,
+  });
+  if (segmentOutcome.kind !== 'idle') {
+    return segmentOutcome;
+  }
+  return runPendingOnce(deps);
+}
+
+async function runPendingOnce(deps: RunDeps): Promise<RunOutcome> {
   const meeting = await claimPendingMeeting(deps.supabase);
   if (!meeting) {
     return { kind: 'idle' };

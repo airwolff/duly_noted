@@ -1,5 +1,6 @@
 import { createServiceClient } from '@duly-noted/db';
 import { loadEnv } from './env.js';
+import { createAnthropicCaller } from './pipeline/anthropic.js';
 import { startPollLoop } from './poll-loop.js';
 
 async function main(): Promise<void> {
@@ -18,11 +19,14 @@ async function main(): Promise<void> {
   }
   console.log('db reachable');
 
+  const callStructured = createAnthropicCaller(env.ANTHROPIC_API_KEY);
+
   const handle = startPollLoop({
     supabase,
     supabaseUrl: env.SUPABASE_URL,
     asrVendorApiKey: env.ASR_VENDOR_API_KEY,
     asrWebhookSecret: env.ASR_WEBHOOK_SECRET,
+    callStructured,
   });
 
   const shutdown = (signal: NodeJS.Signals): void => {

@@ -22,6 +22,11 @@ function logOutcome(outcome: RunOutcome): void {
         `worker tick ${new Date().toISOString()} submitted meeting=${outcome.meetingId} transcript=${outcome.transcriptId}`,
       );
       return;
+    case 'segmented':
+      console.log(
+        `worker tick ${new Date().toISOString()} segmented meeting=${outcome.meetingId} segments=${outcome.segmentCount}`,
+      );
+      return;
     case 'failed':
       console.error(
         `worker tick ${new Date().toISOString()} failed meeting=${outcome.meetingId} message=${outcome.message}`,
