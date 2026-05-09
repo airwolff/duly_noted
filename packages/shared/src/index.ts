@@ -14,3 +14,5 @@ export type {
   AssemblyAISubmitBody,
   BuildSubmitBodyArgs,
 } from './asr.js';
+
+export * from './segmentation/index.js';
