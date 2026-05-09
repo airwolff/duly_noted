@@ -124,3 +124,35 @@ keep the entry — do not delete. The history is the value.
 - Scope: docs/adr/0008-assemblyai-universal-3-pro.md
 - Reasoning: The literal "cheapest with diarization in this tier" was in tension with its own supporting evidence in the pre-restructure SPEC.md row 2.1 — Deepgram Nova-3 was described in the same row as "comparable price tier" rather than "more expensive." Restoring the stronger claim would re-introduce a weakly-supported assertion. The load-bearing rationale that survives in ADR 0008 — diarization included in base rate, competitive Earnings-21 WER ~8.8%, $0.06/hr Universal-2 premium acceptable at ~$10/year v1 volume, opt-out of training available — is fully preserved and is stronger than the price ranking. The audit verifier flagged this tension explicitly.
 - Revisit when: pricing changes substantially and Universal-3 Pro becomes unambiguously cheapest-with-diarization across all current alternatives (Deepgram, Rev.ai, AWS Transcribe, Whisper API). At that point restate the claim with current numbers and a citation.
+
+## NI-012: TRANSCRIPT_EXCERPT_MAX_LEN worker-side cap (SPEC gap)
+- Status: Accepted
+- Source: docs/audits/2026-05-09-slice-3-segmentation.md#q5
+- Date accepted: 2026-05-09
+- Scope: apps/worker/src/pipeline/segment.ts:42
+- Reasoning: SPEC §Slice 3 schema deltas declares `transcript_excerpt text` with no length cap; the worker enforces 500 chars at write time. At v1 there is exactly one writer (`apps/worker/src/pipeline/segment.ts`), so the worker-side cap is the operative contract. A DB-level CHECK constraint or `varchar(500)` would be more robust against future writers but is unnecessary today. The 500-char value is a reader-UI display optimization, not a data integrity constraint.
+- Revisit when: A second segment writer is introduced (Edge Function, bulk import tool, admin UI write path). At that point add a follow-up migration with a `CHECK (char_length(transcript_excerpt) <= 500)` constraint and keep the worker-side cap as defense-in-depth.
+
+## NI-013: Redundant `segments_meeting_id_idx` alongside (meeting_id, sequence_order) UNIQUE
+- Status: Accepted
+- Source: docs/audits/2026-05-09-slice-3-segmentation.md#q6
+- Date accepted: 2026-05-09
+- Scope: supabase/migrations/20260509200337_slice_3_segmentation_schema.sql:50; SPEC.md:373-376
+- Reasoning: The unique constraint on `(meeting_id, sequence_order)` is backed by a btree whose leading column already serves any `WHERE meeting_id = $1` predicate. The separate single-column index on `(meeting_id)` adds no plan improvement, only marginal write amplification and disk. SPEC §Slice 3 Indexes prescribes both indexes with the same blind spot, so the migration faithfully implements a flawed spec. At v1 volume (~1200 segments/year) the cost is irrelevant.
+- Revisit when: Segments table volume grows enough that write amplification is measurable, OR a pass-2 migration touches the segments table for another reason (search columns, membership-aware RLS, soft-delete). Fold the index drop and the corresponding SPEC correction in then.
+
+## NI-014: Speculative barrel exports in packages/shared segmentation
+- Status: Accepted
+- Source: docs/audits/2026-05-09-slice-3-segmentation.md#q7
+- Date accepted: 2026-05-09
+- Scope: packages/shared/src/segmentation/index.ts
+- Reasoning: The exports `MARKER_TYPES`, `TITLE_MAX_LEN`, `DESCRIPTION_MAX_LEN`, `lookupTToken`, `TTokenInput`, `Step1Output`, `Step2Output`, `Step3Output` have zero internal consumers today. They document the package's intended public surface for imminent consumers: the reader UI (Slice 5+) needs `MARKER_TYPES` for filter chips and the length constants for client-side truncation; the Edge Function or summarization handler may need the t-token helpers. Barrel files do not ship dead code (tree-shaking handles that), and the package is not published. Trimming now means re-exporting later.
+- Revisit when: The imminent consumers (reader UI, Edge Function, summarization handler) ship and the actual consumed surface is known. At that point trim any export that remains genuinely unused.
+
+## NI-015: chunkLines admits oversized single line when current is empty
+- Status: Accepted
+- Source: docs/audits/2026-05-09-slice-3-segmentation.md#q11
+- Date accepted: 2026-05-09
+- Scope: apps/worker/src/pipeline/segment.ts:89-108
+- Reasoning: If a single utterance line exceeds `CHUNK_MAX_CHARS` (24K), the guard `current.length > 0` lets the oversized line through whole. AssemblyAI utterances are sentence-level (~100-300 chars including the `[Tn]` prefix and speaker label), so this is structurally implausible. Even if hit, the resulting chunk fits Anthropic's 200K context window with no API failure. Adding a guard defends against a scenario that cannot happen under the current ASR contract and would not fail if it did.
+- Revisit when: ASR vendor changes (off AssemblyAI Universal-3 Pro), OR AssemblyAI's utterance segmentation behavior changes such that single utterances can plausibly exceed 24K chars, OR Anthropic's context window shrinks below the chunk-plus-prompt size.
