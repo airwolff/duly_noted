@@ -168,4 +168,8 @@ Tenant-readiness in the schema does not mean tenant onboarding flows. Build the 
 - If the KB-derived research in the Claude Project conflicts with `SPEC.md`, `SPEC.md` wins. The KB informed the spec; the spec is the lock.
 - If you would need to write more than ~10 lines of "and then…" prose to explain a decision, it belongs in an ADR under `docs/adr/`, not inline.
 
-@SPEC.md
+## Pulling architectural context
+
+For architecture, schema, or stage methodology, read `SPEC.md`. For locked
+decisions and their alternatives, read the relevant ADR in `docs/adr/`.
+Read these only when the current task requires them — do not pre-load.
