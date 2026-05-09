@@ -52,22 +52,22 @@ export interface VideoDetail {
   durationSeconds: number;
 }
 
-const ISO_DURATION_RE = /^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
+const ISO_DURATION_RE = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/;
 
-/**
- * Convert an ISO 8601 duration like "PT1H30M15S" to seconds. Hand-rolled
- * to avoid pulling in a duration library; YouTube's `videos.list` returns
- * only the time-component subset (no Y/M/W/D for video durations).
- */
+// `D` is required because YouTube's videos.list returns `P0D` for live,
+// premiere, and processing-state content. Y/M-before-T/W are unsupported:
+// YouTube doesn't produce them for video durations, and converting calendar
+// units to seconds would require an arbitrary day-count approximation.
 export function parseIsoDuration(iso: string): number {
   const match = ISO_DURATION_RE.exec(iso);
   if (!match) {
     throw new Error(`unrecognized ISO 8601 duration: ${iso}`);
   }
-  const hours = match[1] ? parseInt(match[1], 10) : 0;
-  const minutes = match[2] ? parseInt(match[2], 10) : 0;
-  const seconds = match[3] ? parseInt(match[3], 10) : 0;
-  return hours * 3600 + minutes * 60 + seconds;
+  const days = match[1] ? parseInt(match[1], 10) : 0;
+  const hours = match[2] ? parseInt(match[2], 10) : 0;
+  const minutes = match[3] ? parseInt(match[3], 10) : 0;
+  const seconds = match[4] ? parseInt(match[4], 10) : 0;
+  return days * 86400 + hours * 3600 + minutes * 60 + seconds;
 }
 
 export interface FetchPlaylistArgs {

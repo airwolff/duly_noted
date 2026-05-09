@@ -5,14 +5,32 @@ describe('parseIsoDuration', () => {
   it('parses hours, minutes, seconds', () => {
     expect(parseIsoDuration('PT1H30M15S')).toBe(1 * 3600 + 30 * 60 + 15);
   });
+  it('parses PT1H30M45S', () => {
+    expect(parseIsoDuration('PT1H30M45S')).toBe(1 * 3600 + 30 * 60 + 45);
+  });
   it('parses minutes only', () => {
     expect(parseIsoDuration('PT45M')).toBe(45 * 60);
+  });
+  it('parses PT5M', () => {
+    expect(parseIsoDuration('PT5M')).toBe(5 * 60);
   });
   it('parses seconds only', () => {
     expect(parseIsoDuration('PT12S')).toBe(12);
   });
+  it('parses PT45S', () => {
+    expect(parseIsoDuration('PT45S')).toBe(45);
+  });
   it('parses zero', () => {
     expect(parseIsoDuration('PT0S')).toBe(0);
+  });
+  it('parses P0D as zero (YouTube live/premiere/processing)', () => {
+    expect(parseIsoDuration('P0D')).toBe(0);
+  });
+  it('parses P1D as 86400 seconds', () => {
+    expect(parseIsoDuration('P1D')).toBe(86400);
+  });
+  it('parses days plus time components', () => {
+    expect(parseIsoDuration('P1DT2H30M')).toBe(86400 + 2 * 3600 + 30 * 60);
   });
   it('throws on garbage', () => {
     expect(() => parseIsoDuration('1h30m')).toThrow();
