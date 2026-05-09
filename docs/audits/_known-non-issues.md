@@ -108,3 +108,19 @@ keep the entry — do not delete. The history is the value.
 - Scope: packages/shared/src/, supabase/functions/asr-webhook/
 - Reasoning: One Edge Function at v1. The shared-package value is consistency across multiple consumers; with a single consumer, duplicating the small JSON shape inline avoids wiring a Deno-compatible import path for an npm-workspace package, which is non-trivial under Supabase Edge Functions' module resolution.
 - Revisit when: a second Edge Function lands that needs the same shapes (inbound public API, second webhook receiver, signed-URL minter). At that point the duplication cost crosses the import-wiring cost and shared imports become correct.
+
+## NI-010: ADR 0007 omits "Supabase's recommended pattern" vendor-alignment citation
+- Status: Accepted
+- Source: docs/audits/2026-05-09-spec-restructure.md#q1
+- Date accepted: 2026-05-09
+- Scope: docs/adr/0007-migrations-via-github-action.md
+- Reasoning: The ADR's standalone argument is self-contained. Forward-only migrations are justified by three independent threads in the ADR text: (1) the no-down-scripts consequence (rollback is by writing a forward migration that undoes); (2) the backwards-compatibility framework (additive ahead of consuming code; expand/contract for destructive changes); (3) the parallel-deploy race safety that backwards-compatibility guarantees. The dropped phrase "matches Supabase's recommended pattern" was an unsourced appeal to vendor authority. Restoring it would weaken the ADR by adding a vague vendor citation without a link to the actual recommendation. The decision is defensible on its standalone merits.
+- Revisit when: Supabase publishes a definitive forward-only migration guide that adds material reasoning beyond what the ADR already captures, OR a reviewer/contributor challenges the forward-only choice and asks why no rollback scripts exist (in which case the answer is the rollback-by-forward-migration pattern, not vendor alignment).
+
+## NI-011: ADR 0008 omits "cheapest with diarization in this tier" comparative claim
+- Status: Accepted
+- Source: docs/audits/2026-05-09-spec-restructure.md#q2
+- Date accepted: 2026-05-09
+- Scope: docs/adr/0008-assemblyai-universal-3-pro.md
+- Reasoning: The literal "cheapest with diarization in this tier" was in tension with its own supporting evidence in the pre-restructure SPEC.md row 2.1 — Deepgram Nova-3 was described in the same row as "comparable price tier" rather than "more expensive." Restoring the stronger claim would re-introduce a weakly-supported assertion. The load-bearing rationale that survives in ADR 0008 — diarization included in base rate, competitive Earnings-21 WER ~8.8%, $0.06/hr Universal-2 premium acceptable at ~$10/year v1 volume, opt-out of training available — is fully preserved and is stronger than the price ranking. The audit verifier flagged this tension explicitly.
+- Revisit when: pricing changes substantially and Universal-3 Pro becomes unambiguously cheapest-with-diarization across all current alternatives (Deepgram, Rev.ai, AWS Transcribe, Whisper API). At that point restate the claim with current numbers and a citation.
