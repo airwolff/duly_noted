@@ -20,6 +20,11 @@ custom review UI. Maine selectboard meetings are structurally simpler
 and more agenda-predictable than NYC City Council hearings, so the
 earlier baseline plausibly transfers.
 
+The three-step approach was independently corroborated by parallel
+research outputs across multiple LLMs during KB synthesis (3/3
+confirmation), giving the project high confidence in the underlying
+methodology even though only Oberoi has shipped it in production.
+
 ## Considered options
 
 - **Adapted Oberoi three-step pipeline** — sequential transcript chunks
