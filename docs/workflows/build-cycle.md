@@ -55,10 +55,12 @@ the ingestion pipeline, the search layer — moves through these steps:
    Outputs:
    - A fix-brief saved as `docs/audits/<audit-stem>-fix-brief.md`
      listing fix-now items with concrete CC-ready instructions
-     (committed alongside the source audit, immutable). Includes a
-     "Wont-fix items" section listing the audit IDs accepted as
-     wont-fix with pointers to the resulting NI-NNN registry
-     entries, so the audit + fix-brief pair is self-describing.
+     (committed alongside the source audit; append-only after
+     commit — existing decisions never rewritten, but retroactive
+     convention updates allowed). Includes a "Wont-fix items"
+     section listing the audit IDs accepted as wont-fix with
+     pointers to the resulting NI-NNN registry entries, so the
+     audit + fix-brief pair is self-describing.
    - A transient list of wont-fix entries (reasoning + revisit
      trigger per item) used as input to the promote-to-non-issue
      skill in step 6. Not committed; redundant once registry
@@ -104,7 +106,7 @@ the ingestion pipeline, the search layer — moves through these steps:
 | `SPEC.md` | repo root | Active architecture, schema state, open items, backlog | Amended per slice when scope adds new concepts |
 | `CLAUDE.md` | repo root + per-dir | Rules audits check against | Amended when conventions change |
 | `docs/audits/<date>-<slug>.md` | per audit | Findings from one audit run | Append-only; one file per audit |
-| `docs/audits/<audit-stem>-fix-brief.md` | per audit | Fix-now items from triage with CC-ready instructions; references the audit's wont-fix items by NI ID | Per triage; immutable once committed |
+| `docs/audits/<audit-stem>-fix-brief.md` | per audit | Fix-now items from triage with CC-ready instructions; references the audit's wont-fix items by NI ID | Per triage; append-only after commit (retroactive convention updates allowed) |
 | `docs/audits/_known-non-issues.md` | one file | Registry of accepted wont-fixes | Append-only; entries get promoted out |
 | `docs/audits/README.md` | one file | Audit directory convention | Rare updates |
 | `docs/adr/NNNN-<slug>.md` | one per locked decision | Locked architectural decisions, MADR format | One file per decision; superseded, never edited |
@@ -176,10 +178,13 @@ outcome of the triage discussion in this Claude project:
   a "Wont-fix items" section listing audit IDs accepted as
   wont-fix with pointers to the resulting NI-NNN registry entries.
 
-The fix-brief is committed alongside the source audit and is
-immutable once committed. Even if every audit item was triaged as
-wont-fix, the fix-brief is committed (header + wont-fix references
-only) so the directory listing remains self-describing.
+The fix-brief is committed alongside the source audit. Its content
+is append-only after commit — existing triage decisions are never
+rewritten, but retroactive convention updates (e.g., adding a
+mandatory section type that postdates the brief) may be applied.
+Even if every audit item was triaged as wont-fix, the fix-brief is
+committed (header + wont-fix references only) so the directory
+listing remains self-describing.
 
 The wont-fix entries themselves are produced during triage as a
 transient list (reasoning + revisit trigger per item), pasted

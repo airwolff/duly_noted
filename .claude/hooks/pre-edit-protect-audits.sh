@@ -13,10 +13,13 @@ REL_PATH="${FILE_PATH#$CLAUDE_PROJECT_DIR/}"
 # Allow brand-new files through — only block edits to existing audit history
 [[ ! -e "$FILE_PATH" ]] && exit 0
 
-# Block edits to dated audit files (anything in docs/audits/ NOT starting with _ or named README.md)
+# Block edits to source audit files (dated files in docs/audits/ that are NOT
+# fix-briefs, NOT prefixed with _, and NOT README.md). Fix-briefs are exempt:
+# they capture human triage decisions and may receive retroactive convention
+# updates (e.g., adding a mandatory section type that postdates the brief).
 if echo "$REL_PATH" | grep -qE '^docs/audits/[^_/][^/]*\.md$' && \
-   ! echo "$REL_PATH" | grep -qE '^docs/audits/README\.md$'; then
-  echo "Blocked: dated audit files are append-only and written by the code-audit skill only." >&2
+   ! echo "$REL_PATH" | grep -qE '^docs/audits/(README\.md|.*-fix-brief\.md)$'; then
+  echo "Blocked: source audit files are append-only and written by the code-audit skill only." >&2
   echo "If you need to correct an audit, write a new dated audit instead." >&2
   exit 2
 fi

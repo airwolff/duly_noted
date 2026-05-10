@@ -26,9 +26,11 @@ Examples:
 Triage outcome from the Claude project: a list of fix-now items
 from the source audit, organized by work stream (code fixes vs
 SPEC updates vs other) with file:line references and concrete
-CC-ready instructions per item. Brief is immutable once committed;
-it forms the paper trail linking an audit's findings to the human's
-decisions.
+CC-ready instructions per item. Brief content is append-only after
+commit — existing triage decisions are never rewritten, but
+retroactive convention updates (e.g., adding a mandatory section
+type that postdates the brief) may be applied. The brief forms the
+paper trail linking an audit's findings to the human's decisions.
 
 A fix-brief is committed for every triaged audit, even if every
 item was triaged as wont-fix — in that case the brief contains a
