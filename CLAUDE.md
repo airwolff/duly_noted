@@ -139,7 +139,7 @@ Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
 - yt-dlp version is pinned in `apps/worker/Dockerfile` via build arg. ffmpeg version comes from the pinned base image. Bumps are intentional commits, not lockfile drift.
 - All worker queue reads use `SELECT ... FOR UPDATE SKIP LOCKED` followed by an atomic `UPDATE meetings SET status = ...` on the locked row. Read-then-write without the lock is a bug.
 - Do not commit `.env*` files except `.env.example`. Real secrets live in Cloudflare, Render, and Supabase dashboards.
-- LLM outputs are untrusted input. Validate with Zod before writing to the database. Never `JSON.parse` an LLM response into a typed value without validation.
+- LLM outputs are untrusted input. Validate with Zod before writing to the database. Never `JSON.parse` an LLM response into a typed value without validation. Anthropic structured outputs guarantee schema conformance via constrained decoding but do not guarantee factual accuracy or enforce length/range bounds — Zod still runs on every parsed object and is the only place schema-extra constraints (`minLength`, `maxLength`, `minimum`, `maximum`) are enforced.
 - Cost discipline: this project runs on a tight budget. Before adding a service, dependency, or paid tier, confirm the cost impact against the figures in `SPEC.md`. If it changes the cost model, update `SPEC.md` in the same PR.
 
 ---
