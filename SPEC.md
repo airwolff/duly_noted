@@ -23,7 +23,7 @@ discovered → pending → extracting → transcribing → segmenting → summar
 - **Cron Job** writes new `discovered` rows from YouTube Data API responses, then auto-promotes to `pending` based on per-board title pattern + minimum duration.
 - **Worker** picks up `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `yt-dlp` to extract audio, uploads to Supabase Storage, submits a signed Storage URL to AssemblyAI, and parks the row at `transcribing`.
 - **Supabase Edge Function** (`asr-webhook`) receives the AssemblyAI callback, verifies the `X-DulyNoted-Webhook` auth header, fetches the full transcript JSON from AssemblyAI, writes the artifact to Storage, advances state to `segmenting`. The Edge Function is the only surface that holds both `ASR_VENDOR_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` simultaneously; this is the architecturally chosen surface for the receiver.
-- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → review → published` in a single transaction. Operator review gate at `review → published` is deferred to a future slice (see Backlog B4); the `review` state slot is preserved in the enum for that slice.
+- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → published`. The `review` enum slot is reserved for a future operator review UI slice (see Backlog B4); no row sits in `review` at v1.
 
 Failure semantics: any step that errors writes `status = 'failed'`, a `last_error` field, and `failed_at`; the worker re-polls `failed` rows only on manual reset (no automatic retry storms). Worker invocations are idempotent — picking up the same row twice never double-charges the ASR vendor or double-writes a segment.
 
@@ -116,7 +116,7 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
 - ~~Stage 4: segmentation methodology~~ — closed in Stage 4 below.
-- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → review → published`. Operator review gate deferred (Backlog B4).
+- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → published`. Operator review gate deferred (Backlog B4); the `review` state slot is preserved in the enum for that slice.
 - Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3/4 deltas in Stage 5 below cover the ingest+segmentation+summarization-load-bearing subset; pass 2 still pending.
 
 ---
@@ -543,7 +543,7 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 ## B4 — Operator review gate at `review → published`
 
-- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → review → published` in Stage 6 with no human gate.
+- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → published` directly in Stage 6 with no human gate; no row sits in `review` at v1.
 - **Why:** Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
 - **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught, or (b) the slice that builds an admin/operator UI for any reason picks up the review surface alongside. Whichever fires first.
 
