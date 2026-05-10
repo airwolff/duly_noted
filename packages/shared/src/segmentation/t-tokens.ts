@@ -59,7 +59,7 @@ export function buildTTokenInput(utterances: Utterance[]): TTokenInput {
  */
 export function lookupTToken(token: string, lookup: number[]): number | null {
   const idx = parseTTokenIndex(token);
-  if (idx === null || idx < 0 || idx >= lookup.length) return null;
+  if (idx === null || idx >= lookup.length) return null;
   const value = lookup[idx];
   return value === undefined ? null : value;
 }
