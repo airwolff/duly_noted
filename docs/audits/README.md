@@ -53,6 +53,23 @@ to an ADR under `docs/adr/`) or marked `Withdrawn` when
 circumstances change. Audits read this file first to skip
 already-accepted items.
 
+### Erratum convention
+
+Registry entries are never edited or deleted (see above). When a
+later audit finds that an entry's *reasoning prose* contains a
+factual transcription error (e.g., a misnamed enum value, a wrong
+file:line in a quoted snippet) but the underlying wont-fix decision
+still stands, the correction lives in the citing audit, not in the
+registry. The audit's report quotes the registry text verbatim,
+notes the error, and cites the correct value with evidence. The
+combination of source audit (which usually has the correct text),
+re-audit (which records the discrepancy), and registry entry
+(unchanged) forms a durable correction without registry churn.
+
+This convention does not apply when an entry's *decision* itself
+becomes wrong — that case uses the existing `Withdrawn` status or
+a promoted entry, per the registry header.
+
 ## Wont-fix briefs are not committed
 
 Triage in the Claude project produces wont-fix entries with
