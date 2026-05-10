@@ -156,3 +156,19 @@ keep the entry — do not delete. The history is the value.
 - Scope: apps/worker/src/pipeline/segment.ts:89-108
 - Reasoning: If a single utterance line exceeds `CHUNK_MAX_CHARS` (24K), the guard `current.length > 0` lets the oversized line through whole. AssemblyAI utterances are sentence-level (~100-300 chars including the `[Tn]` prefix and speaker label), so this is structurally implausible. Even if hit, the resulting chunk fits Anthropic's 200K context window with no API failure. Adding a guard defends against a scenario that cannot happen under the current ASR contract and would not fail if it did.
 - Revisit when: ASR vendor changes (off AssemblyAI Universal-3 Pro), OR AssemblyAI's utterance segmentation behavior changes such that single utterances can plausibly exceed 24K chars, OR Anthropic's context window shrinks below the chunk-plus-prompt size.
+
+## NI-016: Failure-path UPDATE in worker handlers is unconditional, not status-guarded
+- Status: Accepted
+- Source: docs/audits/2026-05-10-slice-4-summarization.md#q1
+- Date accepted: 2026-05-10
+- Scope: apps/worker/src/pipeline/fail.ts (called from summarize.ts:148 and segment.ts:315)
+- Reasoning: The complete-path RPCs (`complete_segmentation`, `complete_summarization`) carry `WHERE status = 'segmenting_inflight'` / `WHERE status = 'summarizing_inflight'` write-side idempotency guards. The failure path uses the shared `markFailed()` helper which fires `UPDATE meetings SET status='failed' WHERE id = $id` with no status filter. SPEC §Stage 6 explicitly permits both forms ("a separate UPDATE (or an `abandon_*_meeting` RPC ...)"), and the asymmetry between complete-path and failure-path is operationally safe at v1: single Render worker dyno, control-flow guarantees `markFailed` is called at most once per claimed row in transient-inflight state. Adding a guarded form would require either parallel abandon RPCs across both Slices 3 and 4 (schema churn) or modifying the shared helper (changes Slice 2 caller semantics). Defensive value lands only when a second `markFailed` caller exists outside the claimed-handler context, or when multi-worker deploys ship.
+- Revisit when: Either (a) a second non-handler code path needs to call `markFailed`, or (b) v2 deploys multiple worker instances against the same Supabase, or (c) a production incident traces to a `markFailed`-on-non-inflight-row. Whichever lands first.
+
+## NI-017: Claim RPCs return more columns than the handler currently consumes
+- Status: Accepted
+- Source: docs/audits/2026-05-10-slice-4-summarization.md#q2
+- Date accepted: 2026-05-10
+- Scope: supabase/migrations/ (claim_summarizing_meeting, claim_segmenting_meeting); apps/worker/src/pipeline/summarize.ts, segment.ts
+- Reasoning: `claim_summarizing_meeting` returns `youtube_id` which `runSummarizationOnce` does not read; `claim_segmenting_meeting` returns `duration_seconds` which `runSegmentationOnce` does not read. The asymmetry is intentional: claim RPCs return a row-identity dump to insulate the schema from future handler additions (B5 transcript-aware summarization, re-summarize handlers, ops tooling) that may want the spare columns without requiring an RPC return-type migration. Trimming would require retroactive migrations on both Slice 3 and Slice 4 schemas with zero behavioral change. The spare-column cost (~36 bytes per claim, ~24 claims/year/handler) is negligible.
+- Revisit when: Either (a) a future handler ships and the claim RPC needs columns the current shape doesn't provide, surfacing the migration-deferral cost; or (b) a slice introduces a third claim RPC and the convention's coherence is questioned during planning.
