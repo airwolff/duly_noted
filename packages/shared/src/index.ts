@@ -16,3 +16,5 @@ export type {
 } from './asr.js';
 
 export * from './segmentation/index.js';
+
+export * from './summarization/index.js';
