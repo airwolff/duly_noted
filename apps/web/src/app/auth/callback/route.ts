@@ -1,12 +1,13 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { getSupabaseServerClient } from '@/lib/supabase-server.js';
+import { sanitizeRedirectTo } from '@/lib/redirect-to.js';
 
 export const runtime = 'edge';
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const code = url.searchParams.get('code');
-  const next = url.searchParams.get('next') ?? '/';
+  const redirectTo = sanitizeRedirectTo(url.searchParams.get('redirectTo'));
 
   if (!code) {
     return NextResponse.redirect(new URL('/login?error=missing_code', request.url));
@@ -20,5 +21,5 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(target);
   }
 
-  return NextResponse.redirect(new URL(next, request.url));
+  return NextResponse.redirect(new URL(redirectTo, request.url));
 }
