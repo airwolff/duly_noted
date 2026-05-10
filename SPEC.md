@@ -270,7 +270,7 @@ The summary input is segments-only at v1 — the handler does not open `transcri
 
 **Hallucination guardrails.** Three layers, in priority order:
 
-1. **Entity grounding (Oberoi pattern).** The system prompt enumerates the meeting's known entities — board name, town name, board members where known, agenda item titles parsed from the segment list — and instructs the LLM to ground all claims (names, votes, decisions, dollar amounts, dates) in the supplied segment context only. The Oberoi metadata-grounding pattern (KB `kb_hallucination-mitigation-summarization` C2/C3) addresses the documented failure mode where LLMs fabricate plausible-looking attributes and chain reasoning off the fabrication.
+1. **Entity grounding (Oberoi pattern, adapted).** The system prompt enumerates the meeting's known entities — board name, town name, meeting title, meeting date, agenda item titles parsed from `AGENDA_ITEM` segments — and instructs the LLM to ground all claims (votes, decisions, dollar amounts, dates) in the supplied segment context only. Person-name handling is stricter at v1: the prompt instructs the LLM to use only names that appear verbatim in a segment's `transcript_excerpt`, preserve AssemblyAI diarization labels (e.g. "Speaker A") unchanged when no name is given, and never invent positions or titles for any speaker. The full Oberoi metadata-grounding pattern (KB `kb_hallucination-mitigation-summarization` C2/C3) requires a separate speaker-identification pre-pass mapping diarization labels to a board-member roster — the v1 deviation lives because Slice 3 has no such pre-pass and the `boards` table has no member roster (see Backlog B6).
 2. **Schema enforcement.** Anthropic structured outputs constrain the response shape; Zod validates the parsed object before any DB write.
 3. **Length bounds.** Zod-enforced (not in the JSON schema, since `minLength`/`maxLength` are not supported by Anthropic's structured outputs). Summary length must fall within configured min/max — out-of-bounds output triggers retry per the failure modes below, and on persistent failure the row goes to `status = 'failed'`.
 
@@ -285,19 +285,14 @@ Heavier post-hoc verification (RAGAS Faithfulness, claim-to-segment alignment sc
 
 **Output enforcement.** Native structured outputs with a JSON schema for `{ summary: string }`. Zod schema mirrors it and additionally enforces length bounds. JSON + Zod schemas live in `packages/shared/src/summarization/schemas.ts`.
 
-**State transition.** Worker picks up `meetings.status = 'summarizing'` with `SELECT … FOR UPDATE SKIP LOCKED`, runs the summarization call, writes the summary in a single transaction:
+**State transition.** The worker uses two RPCs paralleling Slice 3's `claim_segmenting_meeting()` / `complete_segmentation()` pair, ensuring the CLAUDE.md §6 lock-then-atomic-update rule holds across the LLM call's duration without keeping a Postgres connection open for the full call:
 
-```sql
-UPDATE meetings
-   SET summary = $1,
-       summary_generated_at = now(),
-       status = 'published',
-       updated_at = now()
- WHERE id = $2
-   AND status = 'summarizing'
-```
+- `claim_summarizing_meeting()` — opens a transaction, executes `SELECT ... FOR UPDATE SKIP LOCKED` against rows at `status = 'summarizing'` (LIMIT 1), atomically updates the locked row to `status = 'summarizing_inflight'`, commits, returns the row. The transient `summarizing_inflight` state is the semaphore: once claimed, the row is invisible to other workers polling `summarizing`, so concurrent or restarted workers cannot redundantly call the LLM and double-bill Anthropic.
+- `complete_summarization(meeting_id uuid, summary text)` — atomically writes the summary, sets `summary_generated_at = now()`, advances status from `summarizing_inflight` to `published`, with `WHERE status = 'summarizing_inflight'` providing write-side idempotency under any duplicate-call edge case.
 
-The single transition `summarizing → published` (skipping `review`) reflects the v1 "no operator gate" decision. The `review` enum value is preserved for the future operator review UI slice (Backlog B4); no row should sit in `review` at v1.
+Failure path mirrors Slice 3's: a separate UPDATE (or an `abandon_summarizing_meeting` RPC if Slice 3 has the parallel) sets `summarizing_inflight → failed` with `last_error` and `failed_at` populated.
+
+The single user-facing transition is `summarizing → published`. The `review` enum slot is reserved for the future operator review UI slice (Backlog B4); no row sits in `review` at v1. The `summarizing_inflight` state is a transient implementation detail not shown in the §"Background job architecture" diagram, paralleling Slice 3's transient `chaptering` state.
 
 **Failure modes.**
 
@@ -462,12 +457,26 @@ Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes
 
 Additive, single migration file `NNNN_slice_4_summarization_schema.sql`, backwards-compatible with the previously deployed worker.
 
+**Enum addition:**
+
+```sql
+alter type public.meeting_status add value 'summarizing_inflight' before 'review';
+```
+
+Transient state for the worker's claim/complete pattern (see Stage 6 §State transition), paralleling Slice 3's `chaptering`. Not shown in the §"Background job architecture" state diagram — implementation detail. Postgres 14+ permits `ALTER TYPE ADD VALUE` inside a transaction, so this lands in the same migration file as the column additions.
+
 **Meetings table additions:**
 
 - `summary text` (nullable; populated when summarization succeeds and the row advances to `published`)
 - `summary_generated_at timestamptz` (nullable; populated in the same `UPDATE` that writes `summary`)
 
 Both columns are nullable indefinitely — historical rows that pre-date Slice 4 (none exist in production at the time of this slice, but the constraint matters for replay) carry NULL values until re-run, and rows that fail the summarization step never receive values. NOT NULL is deferred until and unless backfill completes; no Backlog entry needed because the nullable shape is correct as-is.
+
+**Stored procedures (RPCs).** Mirror Slice 3's claim/complete pair:
+
+- `claim_summarizing_meeting()` — opens a transaction, `SELECT ... FOR UPDATE SKIP LOCKED` on a row at `status = 'summarizing'` (LIMIT 1), atomic UPDATE to `status = 'summarizing_inflight'`, commit, return the row. Match Slice 3's `claim_segmenting_meeting()` shape and naming convention exactly.
+- `complete_summarization(meeting_id uuid, summary text)` — atomically writes `summary`, `summary_generated_at = now()`, advances status from `summarizing_inflight` to `published`, with `WHERE status = 'summarizing_inflight'` for write-side idempotency. Match Slice 3's `complete_segmentation()` shape.
+- Failure path follows whatever pattern Slice 3 uses for failed segmentation (separate `abandon_*` RPC or inline UPDATE) — match exactly; do not introduce a new failure-path style for this stage.
 
 **Indexes.** None added. The summary column is reader-UI-rendered, not queried. No `WHERE summary IS NOT NULL` filter is needed at the database layer (the existing `WHERE status = 'published'` policy already filters to rows that successfully completed summarization).
 
@@ -543,3 +552,9 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 - **What:** Alternative summarization path where the handler reads `transcript.json` and passes raw transcript context to the LLM call alongside (or instead of) the segments-only input shipped in Slice 4. Bundles B1 (handler is opening `transcript.json` anyway).
 - **Why:** Slice 4 ships segments-only summarization on the hypothesis that segment titles + descriptions + transcript_excerpts carry enough context for a faithful meeting summary. Whether richer context from the raw transcript yields meaningfully better quality is unproven. Bundling transcript-read into the production handler couples B1 and adds I/O + token cost without quality evidence.
 - **Trigger:** Run an offline eval first. Add `apps/worker/scripts/eval-summary-prompts.ts` (one-off, not on the hot path; reads a `meeting_id`, runs both prompts — segments-only vs. transcript-aware — against the same Anthropic call, dumps both summaries side-by-side for human comparison). Run on 3–5 representative meetings spanning marker-type distribution. If transcript-aware wins consistently, ship B5 as a slice (which automatically ships B1). If the segments-only summary is qualitatively comparable, B5 stays deferred and the eval script is the durable record of "we tested both ways."
+
+## B6 — Speaker-identification pre-pass + board member roster
+
+- **What:** Add a separate LLM pass that runs between `transcribing` and `segmenting`, mapping AssemblyAI diarization speaker labels (Speaker A, Speaker B, ...) to actual names using a board-member roster stored on the `boards` table (e.g. `boards.member_names text[]`, plus optional position/role fields). Persist the resolved mapping per segment so downstream stages and the reader UI carry actual names rather than diarization labels.
+- **Why:** Oberoi's full metadata-grounding pattern (KB `kb_hallucination-mitigation-summarization` C2/C3) requires this pre-pass to enable named-entity grounding in the summarization prompt. V1 deviates: Stage 6's grounding rule preserves diarization labels rather than resolving them to names, accepting that summaries may read as "Speaker A proposed..." instead of "Selectman Smith proposed..." Whether this hurts readability for newsroom-grade publication is unknown.
+- **Trigger:** Post-publication audit of v1 summaries reveals that diarization-label preservation systematically obscures who said what, OR an operator audit catches name fabrication that the v1 prompt rule failed to prevent. Implementation requires schema (member roster column on `boards`), an admin path to populate it, and the new LLM stage in the worker — large enough to be a slice on its own, not a follow-up.
