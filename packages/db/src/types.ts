@@ -13,6 +13,7 @@ export type MeetingStatus =
   | 'segmenting'
   | 'chaptering'
   | 'summarizing'
+  | 'summarizing_inflight'
   | 'review'
   | 'published'
   | 'failed';
@@ -133,6 +134,8 @@ export interface Database {
           duration_seconds: number | null;
           title: string | null;
           failed_at: string | null;
+          summary: string | null;
+          summary_generated_at: string | null;
         };
         Insert: {
           id?: string;
@@ -149,6 +152,8 @@ export interface Database {
           duration_seconds?: number | null;
           title?: string | null;
           failed_at?: string | null;
+          summary?: string | null;
+          summary_generated_at?: string | null;
         };
         Update: {
           id?: string;
@@ -165,6 +170,8 @@ export interface Database {
           duration_seconds?: number | null;
           title?: string | null;
           failed_at?: string | null;
+          summary?: string | null;
+          summary_generated_at?: string | null;
         };
         Relationships: [];
       };
@@ -261,6 +268,20 @@ export interface Database {
       };
       complete_segmentation: {
         Args: { p_meeting_id: string; p_segments: Json };
+        Returns: void;
+      };
+      claim_summarizing_meeting: {
+        Args: Record<string, never>;
+        Returns: {
+          id: string;
+          board_id: string;
+          title: string | null;
+          meeting_date: string | null;
+          youtube_id: string;
+        }[];
+      };
+      complete_summarization: {
+        Args: { p_meeting_id: string; p_summary: string };
         Returns: void;
       };
     };
