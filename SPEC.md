@@ -250,9 +250,9 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 
 - LLM returns a T-token not in the lookup table: Zod validator rejects, worker writes `status = 'failed'`, `last_error` captures the offending token, manual reset required.
 - Sub-second utterance rounding can produce `Math.floor(startUtt.start / 1000) === Math.ceil(endUtt.end / 1000)` at the worker's T-token-to-seconds resolution step. The worker coerces `endSec = startSec + 1` to satisfy the `end_time_seconds > start_time_seconds` CHECK constraint and emits a `console.warn` with the meeting id, segment `sequence_order`, and original millisecond bounds. The row does not fail. (Under the T-token scheme the LLM never emits seconds; this artifact is purely worker-side.)
-- Anthropic API timeout or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
+- Anthropic API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
 - Empty `utterances[]` array in the transcript artifact: worker fails the row at pickup before any LLM call.
-- Step 2 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).
+- Step 1 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).
 - Step 1 returns zero markers across every chunk of the transcript: meeting fails (`status = 'failed'`, `last_error` records the empty-marker condition, manual reset required). Per-chunk zero markers remains acceptable (above); full-transcript zero indicates an ASR or pipeline fault. A real meeting always produces at least one `PROCEDURE` marker (call-to-order, adjournment).
 
 **Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
@@ -436,3 +436,56 @@ The service-role key, the ASR vendor key, and the webhook secret never reach Clo
 **Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
 
 **Open items.** End-to-end magic-link round trip was deferred at scaffold close because the Supabase built-in SMTP rate limit was hit during dashboard wiring. Slice 2 does not require an authenticated UI surface, so this verification step remains deferred. First slice that ships an admin UI (operator review, manual ingest trigger) closes the deferral.
+
+## Backlog / Slice candidates
+
+Observations and design considerations that surfaced outside slice
+scope. Each item lists what, why, and the trigger that should
+promote it into an upcoming slice. Items are cut from this section
+when a slice picks them up.
+
+### B1 — duration_seconds source of truth
+
+What: replace or cross-check `meetings.duration_seconds` (currently
+written by `worker-cron` from `videos.list` `contentDetails.duration`)
+with AssemblyAI's `audio_duration` field, which is present in every
+transcript JSON.
+
+Why: AssemblyAI's value reflects what was actually transcribed,
+survives YouTube takedowns, and avoids the ISO 8601 parse path
+that already produced one bug (P0D fix). Demonstrated by row
+a669dadb-816f-44a2-8d6c-54a6e2197ca1 (Lincolnville, 2026-05-08
+discovery): YouTube video taken down post-extraction, cron's value
+unrecoverable, AssemblyAI's value (2506) backfilled manually.
+
+Trigger: Slice 4 (summarization) handler already opens the
+transcript JSON; minimal cost to write `audio_duration` back to
+`meetings.duration_seconds` in the same transaction. Bundle there.
+
+### B2 — NOT NULL constraint on duration_seconds
+
+What: once B1 ships and a reliable write path always populates
+`duration_seconds`, add a `NOT NULL` constraint via migration.
+
+Why: makes the field load-bearing for downstream consumers
+(in-bounds checks, reader UI duration display, search ranking by
+meeting length).
+
+Trigger: B1 ships. Bundle the migration.
+
+### B3 — YouTube unavailability detection and fallback
+
+What: detect when a published meeting's YouTube video becomes
+unavailable, mark the row, and serve the audio file from Storage
+through a custom HTML5 player with the same timestamp-linking
+semantics.
+
+Why: V1's locked verification surface is YouTube timestamp links
+(per ADR for Slice 5 verification surface). Row
+a669dadb-816f-44a2-8d6c-54a6e2197ca1 is the project's first live
+instance of the failure mode. The KB has prior research:
+`kb_video-timestamp-linking-ux_2026-04-29_v1_youtube-unavailability.xml`
+and `kb_video-timestamp-linking-ux_2026-04-29_v1_fallback-embed-impl.xml`.
+
+Trigger: Slice 5 reader UI design. Use the existing dead-video
+row as the development test case.
