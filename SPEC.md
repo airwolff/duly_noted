@@ -544,7 +544,7 @@ The service-role key, the ASR vendor key, and the webhook secret never reach Clo
 
 **Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
 
-**Open items.** None. Slice 5 closed the magic-link round-trip deferral; the reader UI ships behind authenticated routes, exercising the full sign-in flow end-to-end. SMTP provider as-built: `[Supabase built-in / custom SMTP via Resend]` — fill at slice close. The decision is recorded inline in §Stage 8 and does not warrant a separate ADR.
+**Open items.** None. Slice 5 closed the magic-link round-trip deferral; the reader UI ships behind authenticated routes, exercising the full sign-in flow end-to-end. SMTP provider as-built: Supabase built-in SMTP. The decision is recorded inline in §Stage 8 and does not warrant a separate ADR.
 
 ---
 
@@ -599,7 +599,7 @@ The hybrid layout matches the locked product decision: summary at top, chaptered
 - YouTube iframe error: B3 fallback above.
 - Segment ordering anomaly (duplicate `sequence_order`): rendered in `(sequence_order, id)` order to keep the page deterministic across loads.
 
-**Email provider for magic-link delivery.** Slice 5 closes the Stage 7 deferral. Provider as-built: `[Supabase built-in SMTP / custom SMTP via Resend]` — this line gets filled at slice close based on whether the built-in tier holds at first real auth volume. If the built-in rate-limits during the slice build, the slice ships custom SMTP; otherwise it stays on built-in and a future slice migrates if volume demands.
+**Email provider for magic-link delivery.** Slice 5 closes the Stage 7 deferral. Provider as-built: Supabase built-in SMTP. The built-in tier was sufficient through slice build (no real auth volume yet) and a future slice migrates to custom SMTP if production volume demands.
 
 **Cost expectation at v1 scale.** Cloudflare Pages free tier covers the reader. Supabase reads are RLS-filtered SELECTs against indexed columns; no new vendor cost. Magic-link emails on the built-in tier are free within the rate cap; custom SMTP via Resend is ~$0/month at the small allowlist size (Resend's free tier is 100 emails/day, well above v1 need).
 
