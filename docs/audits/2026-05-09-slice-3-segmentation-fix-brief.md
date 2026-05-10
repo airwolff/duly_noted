@@ -184,6 +184,19 @@ a `logger.warn`. The row does not fail."
 3. **Wont-fix promotion** — separate skill invocation. See companion
    brief.
 
+## Wont-fix items
+
+Four items from the source audit were triaged as wont-fix and
+promoted to `_known-non-issues.md`:
+
+- **Q5** — TRANSCRIPT_EXCERPT_MAX_LEN worker-side cap → NI-012
+- **Q6** — redundant `segments_meeting_id_idx` → NI-013
+- **Q7** — speculative barrel exports in segmentation package → NI-014
+- **Q11** — chunkLines admits oversized single line → NI-015
+
+See `docs/audits/_known-non-issues.md` for reasoning and revisit
+triggers per entry.
+
 ## Out of scope (reference)
 
 Wont-fix items handled in companion brief: Q5, Q6, Q7, Q11.
