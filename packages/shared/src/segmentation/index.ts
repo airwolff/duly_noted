@@ -1,7 +1,7 @@
 export { MARKER_TYPES } from './taxonomy.js';
 export type { MarkerType } from './taxonomy.js';
 
-export { buildTTokenInput, lookupTToken, validateTTokens } from './t-tokens.js';
+export { buildTTokenInput, lookupTToken, parseTTokenIndex, validateTTokens } from './t-tokens.js';
 export type { Utterance, TTokenInput } from './t-tokens.js';
 
 export {

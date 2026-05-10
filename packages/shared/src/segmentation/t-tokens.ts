@@ -24,6 +24,18 @@ export interface TTokenInput {
 const T_TOKEN_RE = /^\[T(\d+)\]$/;
 
 /**
+ * Parse a `[T{n}]` token into its integer index. Single source of truth for
+ * the T-token regex shape; consumed by `lookupTToken` here and by the worker's
+ * segmentation pipeline. Returns null if the token shape doesn't match.
+ */
+export function parseTTokenIndex(token: string): number | null {
+  const m = T_TOKEN_RE.exec(token);
+  if (!m || !m[1]) return null;
+  const idx = Number.parseInt(m[1], 10);
+  return Number.isInteger(idx) ? idx : null;
+}
+
+/**
  * Inject `[T0]`, `[T1]`, ... ahead of each utterance text. The speaker label
  * (when present) is included so the LLM can identify public-comment vs
  * board-member voices for marker classification.
@@ -46,10 +58,8 @@ export function buildTTokenInput(utterances: Utterance[]): TTokenInput {
  * token is malformed or out of range for the lookup.
  */
 export function lookupTToken(token: string, lookup: number[]): number | null {
-  const m = T_TOKEN_RE.exec(token);
-  if (!m || !m[1]) return null;
-  const idx = Number.parseInt(m[1], 10);
-  if (!Number.isInteger(idx) || idx < 0 || idx >= lookup.length) return null;
+  const idx = parseTTokenIndex(token);
+  if (idx === null || idx < 0 || idx >= lookup.length) return null;
   const value = lookup[idx];
   return value === undefined ? null : value;
 }

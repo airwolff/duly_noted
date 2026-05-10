@@ -1,4 +1,8 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, {
+  APIConnectionError,
+  InternalServerError,
+  RateLimitError,
+} from '@anthropic-ai/sdk';
 
 /**
  * Thin wrapper around the Anthropic SDK that issues a single structured-output
@@ -6,16 +10,17 @@ import Anthropic from '@anthropic-ai/sdk';
  * post-processing). Returns the parsed JSON as `unknown` so the caller is
  * forced to Zod-validate before any DB write per CLAUDE.md §6.
  *
- * Includes the retry policy specified by SPEC §Stage 4 — three retries with
- * exponential backoff (1s, 4s, 16s) on any thrown error from the SDK call.
- * After all retries exhausted, the most recent error propagates and the
- * orchestrator marks the meeting failed.
+ * Implements SPEC §Stage 4's retry policy — three retries with exponential
+ * backoff (1s, 4s, 16s) scoped to transient errors only: connection errors
+ * (incl. timeout subclass), 5xx, and 429. Auth/4xx/parse errors propagate
+ * immediately. The Anthropic SDK is configured with `maxRetries: 0` so its
+ * own retry behavior does not stack on top.
  */
 
 export interface CallStructuredArgs {
   systemPrompt: string;
   userPrompt: string;
-  jsonSchema: Record<string, unknown>;
+  jsonSchema: Readonly<Record<string, unknown>>;
   maxTokens?: number;
 }
 
@@ -31,12 +36,21 @@ async function sleep(ms: number): Promise<void> {
   });
 }
 
+function isRetriable(err: unknown): boolean {
+  return (
+    err instanceof APIConnectionError ||
+    err instanceof InternalServerError ||
+    err instanceof RateLimitError
+  );
+}
+
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
     try {
       return await fn();
     } catch (err) {
+      if (!isRetriable(err)) throw err;
       lastErr = err;
       if (attempt === RETRY_DELAYS_MS.length) break;
       const delay = RETRY_DELAYS_MS[attempt];
@@ -54,7 +68,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
  * can substitute a stub implementation directly.
  */
 export function createAnthropicCaller(apiKey: string): CallStructured {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, maxRetries: 0 });
   return async function callStructured(args: CallStructuredArgs): Promise<unknown> {
     return withRetry(async () => {
       const response = await client.messages.create({

@@ -6,6 +6,7 @@ import {
   STEP_2_SYSTEM_PROMPT,
   STEP_3_SYSTEM_PROMPT,
   buildTTokenInput,
+  parseTTokenIndex,
   step1JsonSchema,
   step1OutputSchema,
   step2JsonSchema,
@@ -79,11 +80,11 @@ interface SegmentRow {
 }
 
 function tIndex(token: string): number {
-  const m = /^\[T(\d+)\]$/.exec(token);
-  if (!m || !m[1]) {
+  const idx = parseTTokenIndex(token);
+  if (idx === null) {
     throw new Error(`invalid T-token: ${token}`);
   }
-  return Number.parseInt(m[1], 10);
+  return idx;
 }
 
 function chunkLines(text: string, maxChars: number): string[] {
@@ -155,7 +156,7 @@ async function extractMarkers(
     const raw = await callStructured({
       systemPrompt: STEP_1_SYSTEM_PROMPT,
       userPrompt: chunk,
-      jsonSchema: step1JsonSchema as unknown as Record<string, unknown>,
+      jsonSchema: step1JsonSchema,
       maxTokens: 4096,
     });
     const parsed = step1OutputSchema.parse(raw);
@@ -182,7 +183,9 @@ async function determineBoundaries(
   const ends: string[] = [];
   for (let i = 0; i < markers.length; i += 1) {
     const marker = markers[i];
-    if (!marker) continue;
+    if (!marker) {
+      throw new Error('invariant violation: markers[i] undefined inside bounded loop');
+    }
     const startIdx = tIndex(marker.start_token);
     const nextMarker = markers[i + 1];
     const sliceEnd = nextMarker ? tIndex(nextMarker.start_token) : lines.length;
@@ -191,7 +194,7 @@ async function determineBoundaries(
     const raw = await callStructured({
       systemPrompt: STEP_2_SYSTEM_PROMPT,
       userPrompt,
-      jsonSchema: step2JsonSchema as unknown as Record<string, unknown>,
+      jsonSchema: step2JsonSchema,
       maxTokens: 256,
     });
     const parsed = step2OutputSchema.parse(raw);
@@ -212,6 +215,7 @@ async function determineBoundaries(
 
 async function generateTitlesAndDescriptions(
   callStructured: CallStructured,
+  meetingId: string,
   markers: Step1Marker[],
   ends: string[],
   lines: string[],
@@ -221,7 +225,12 @@ async function generateTitlesAndDescriptions(
   for (let i = 0; i < markers.length; i += 1) {
     const marker = markers[i];
     const endToken = ends[i];
-    if (!marker || !endToken) continue;
+    if (!marker) {
+      throw new Error('invariant violation: markers[i] undefined inside bounded loop');
+    }
+    if (!endToken) {
+      throw new Error('invariant violation: ends[i] undefined inside bounded loop');
+    }
     const startIdx = tIndex(marker.start_token);
     const endIdx = tIndex(endToken);
     const chapterText = lines.slice(startIdx, endIdx + 1).join('\n');
@@ -229,7 +238,7 @@ async function generateTitlesAndDescriptions(
     const raw = await callStructured({
       systemPrompt: STEP_3_SYSTEM_PROMPT,
       userPrompt,
-      jsonSchema: step3JsonSchema as unknown as Record<string, unknown>,
+      jsonSchema: step3JsonSchema,
       maxTokens: 1024,
     });
     const parsed = step3OutputSchema.parse(raw);
@@ -242,6 +251,9 @@ async function generateTitlesAndDescriptions(
     const startSec = Math.floor(startUtt.start / 1000);
     let endSec = Math.ceil(endUtt.end / 1000);
     if (endSec <= startSec) {
+      console.warn(
+        `segment-coerce meeting_id=${meetingId} sequence_order=${i} start_ms=${startUtt.start} end_ms=${endUtt.end}`,
+      );
       endSec = startSec + 1;
     }
 
@@ -282,6 +294,7 @@ export async function runSegmentationOnce(deps: SegmentDeps): Promise<SegmentOut
     const ends = await determineBoundaries(deps.callStructured, markers, lines, tInput.lookup);
     const segments = await generateTitlesAndDescriptions(
       deps.callStructured,
+      meeting.id,
       markers,
       ends,
       lines,

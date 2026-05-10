@@ -249,7 +249,7 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 **Failure modes.**
 
 - LLM returns a T-token not in the lookup table: Zod validator rejects, worker writes `status = 'failed'`, `last_error` captures the offending token, manual reset required.
-- Sub-second utterance rounding can produce `Math.floor(startUtt.start / 1000) === Math.ceil(endUtt.end / 1000)` at the worker's T-token-to-seconds resolution step. The worker coerces `endSec = startSec + 1` to satisfy the `end_time_seconds > start_time_seconds` CHECK constraint and emits a `logger.warn` with the meeting id, segment `sequence_order`, and original millisecond bounds. The row does not fail. (Under the T-token scheme the LLM never emits seconds; this artifact is purely worker-side.)
+- Sub-second utterance rounding can produce `Math.floor(startUtt.start / 1000) === Math.ceil(endUtt.end / 1000)` at the worker's T-token-to-seconds resolution step. The worker coerces `endSec = startSec + 1` to satisfy the `end_time_seconds > start_time_seconds` CHECK constraint and emits a `console.warn` with the meeting id, segment `sequence_order`, and original millisecond bounds. The row does not fail. (Under the T-token scheme the LLM never emits seconds; this artifact is purely worker-side.)
 - Anthropic API timeout or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
 - Empty `utterances[]` array in the transcript artifact: worker fails the row at pickup before any LLM call.
 - Step 2 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).

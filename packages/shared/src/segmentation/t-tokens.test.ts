@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTTokenInput, lookupTToken, validateTTokens } from './t-tokens.js';
+import { buildTTokenInput, lookupTToken, parseTTokenIndex, validateTTokens } from './t-tokens.js';
 
 describe('buildTTokenInput', () => {
   it('injects sequential [T{n}] tokens ahead of every utterance', () => {
@@ -23,6 +23,31 @@ describe('buildTTokenInput', () => {
     const out = buildTTokenInput([]);
     expect(out.text).toBe('');
     expect(out.lookup).toEqual([]);
+  });
+});
+
+describe('parseTTokenIndex', () => {
+  it('returns the integer index for a valid token', () => {
+    expect(parseTTokenIndex('[T0]')).toBe(0);
+    expect(parseTTokenIndex('[T42]')).toBe(42);
+  });
+
+  it('returns null for missing brackets', () => {
+    expect(parseTTokenIndex('T0')).toBeNull();
+    expect(parseTTokenIndex('T42')).toBeNull();
+  });
+
+  it('returns null for non-numeric body', () => {
+    expect(parseTTokenIndex('[Tabc]')).toBeNull();
+    expect(parseTTokenIndex('[T-1]')).toBeNull();
+    expect(parseTTokenIndex('[T1.5]')).toBeNull();
+  });
+
+  it('returns null for invalid format', () => {
+    expect(parseTTokenIndex('[X0]')).toBeNull();
+    expect(parseTTokenIndex('[T]')).toBeNull();
+    expect(parseTTokenIndex('')).toBeNull();
+    expect(parseTTokenIndex('[T0] extra')).toBeNull();
   });
 });
 
