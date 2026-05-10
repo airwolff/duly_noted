@@ -23,7 +23,7 @@ discovered → pending → extracting → transcribing → segmenting → summar
 - **Cron Job** writes new `discovered` rows from YouTube Data API responses, then auto-promotes to `pending` based on per-board title pattern + minimum duration.
 - **Worker** picks up `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `yt-dlp` to extract audio, uploads to Supabase Storage, submits a signed Storage URL to AssemblyAI, and parks the row at `transcribing`.
 - **Supabase Edge Function** (`asr-webhook`) receives the AssemblyAI callback, verifies the `X-DulyNoted-Webhook` auth header, fetches the full transcript JSON from AssemblyAI, writes the artifact to Storage, advances state to `segmenting`. The Edge Function is the only surface that holds both `ASR_VENDOR_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` simultaneously; this is the architecturally chosen surface for the receiver.
-- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → published`. The `review` enum slot is reserved for a future operator review UI slice (see Backlog B4); no row sits in `review` at v1.
+- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → published` directly. The `review` enum slot is reserved for the future operator review UI slice (see Backlog B4); no row sits in `review` at v1.
 
 Failure semantics: any step that errors writes `status = 'failed'`, a `last_error` field, and `failed_at`; the worker re-polls `failed` rows only on manual reset (no automatic retry storms). Worker invocations are idempotent — picking up the same row twice never double-charges the ASR vendor or double-writes a segment.
 
@@ -116,7 +116,7 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
 - ~~Stage 4: segmentation methodology~~ — closed in Stage 4 below.
-- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → published`. Operator review gate deferred (Backlog B4); the `review` state slot is preserved in the enum for that slice.
+- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → published` directly. Operator review gate deferred (Backlog B4).
 - Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3/4 deltas in Stage 5 below cover the ingest+segmentation+summarization-load-bearing subset; pass 2 still pending.
 
 ---
@@ -385,15 +385,17 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
   > membership-aware policies are deferred to pass 2. The tenant-boundary
   > hole becomes load-bearing the moment a second publication onboards or
   > authenticated reader UI ships — whichever comes first. See
-  > `_known-non-issues.md` NI-008.
+  > `_known-non-issues.md` NI-008. **Slice 5 closes NI-008**: the
+  > authenticated SELECT policy on `meetings` is replaced with a
+  > membership-aware version. See ## Slice 5 schema deltas below.
 
 **Storage bucket:**
 
 - Create `meeting-artifacts` private bucket. Service-role unrestricted; no public read; signed URLs only for vendor handoff.
 
-Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns, membership-aware RLS.
+Pass 2 still deferred: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns.
 
-Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `towns`, `boards` (surfaced post-audit by cron path against cloud Supabase). Remaining pass-2 work: full grant matrix for `authenticated` and `anon` paired with membership-aware RLS policies.
+Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `towns`, `boards` (surfaced post-audit by cron path against cloud Supabase). Slice 5 landed `authenticated` SELECT grants on `publications`, `towns`, `boards`, `meetings`, `segments`, `memberships` paired with membership-aware RLS policies (see ## Slice 5 schema deltas below). No `anon` grants on any table beyond `_scaffold_health` — the v1 reader is private.
 
 ## Slice 3 schema deltas
 
@@ -447,11 +449,14 @@ create table public.segments (
   > **Pass-2 note:** Same tenant-boundary deferral as `meetings` (NI-008). Any
   > authenticated user can read any published meeting's segments regardless of
   > publication membership. Membership-aware policy lands in pass 2 alongside
-  > the meetings-table membership policy.
+  > the meetings-table membership policy. **Slice 5 closes this**: the
+  > policy is replaced with a membership-aware version that joins through
+  > meetings → boards → towns → memberships. See ## Slice 5 schema deltas
+  > below.
 
 **Storage bucket.** No new bucket. Segments live entirely in Postgres; no Storage artifact for segments at v1. (Search slice will add pgvector + tsvector columns in pass 2.)
 
-Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments`, membership-aware RLS on every table.
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments`.
 
 ## Slice 4 schema deltas
 
@@ -482,11 +487,35 @@ Both columns are nullable indefinitely — historical rows that pre-date Slice 4
 
 **Trigger.** `set_updated_at()` already applies to `meetings` from Slice 2; the new columns are covered.
 
-**RLS.** No new policy. The existing `authenticated` SELECT-where-status-published policy on `meetings` covers the new columns. Same pass-2 tenant-boundary deferral applies (NI-008).
+**RLS.** No new policy at Slice 4. The existing `authenticated` SELECT-where-status-published policy on `meetings` covers the new columns. Same pass-2 tenant-boundary deferral applies (NI-008). (Slice 5 replaces that policy with a membership-aware version; the new columns inherit the replacement.)
 
 **Storage bucket.** No new bucket. Summary lives entirely in Postgres.
 
-Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships), membership-aware RLS on every table.
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships).
+
+## Slice 5 schema deltas
+
+Single migration file `NNNN_slice_5_reader_ui_rls.sql`, backwards-compatible with the previously deployed worker (the worker uses `service_role`, which is unaffected by these `authenticated`-scoped changes).
+
+**Policy replacement on `meetings`.**
+
+The existing `authenticated` SELECT-where-status-published policy on `meetings` is replaced with a membership-aware version that adds a JOIN through `boards` → `towns` → `memberships` to constrain reads to the user's publications. Strictly tighter than the prior policy; no row visible under the old policy becomes hidden incorrectly under the new one within the single configured tenant. Closes the NI-008 tenant-boundary deferral.
+
+**New `authenticated` SELECT policies + matching GRANTs on:**
+
+- `publications` — `id IN (SELECT publication_id FROM memberships WHERE user_id = auth.uid())`
+- `towns` — `publication_id IN (SELECT publication_id FROM memberships WHERE user_id = auth.uid())`
+- `boards` — JOIN through `towns` and `memberships`
+- `segments` — replaces the existing published-only policy with a JOIN through `meetings` (which after the meetings-policy replacement above already enforces both `status = 'published'` and the tenant boundary, so segments inherit both gates)
+- `memberships` — `user_id = auth.uid()` (flat self-row policy, required for the bootstrap hop where the reader resolves which publication a user belongs to)
+
+Each policy is paired with `GRANT SELECT ON public.{table} TO authenticated`.
+
+**No table-shape changes.** No new columns, no new tables, no enum changes, no new indexes. The migration is RLS + GRANT only. The worker is unaffected: it uses `service_role`, which bypasses RLS.
+
+**Performance note.** The nested-subquery policy shape relies on FK-side indexes on `memberships.publication_id`, `towns.publication_id`, `boards.town_id`, `meetings.board_id`. The first three remain in the pass-2 deferred list (FK-side indexes were always part of pass 2); `meetings.board_id` is already indexed (Slice 2 `meetings_board_id_idx`). At v1 corpus scale (~24 meetings/year, single tenant) the unindexed JOIN cost is irrelevant. The pass-2 FK index work picks the rest up before tenant scale stresses the policy plan.
+
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id` and other un-indexed FK-side columns, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships).
 
 ---
 
@@ -515,7 +544,66 @@ The service-role key, the ASR vendor key, and the webhook secret never reach Clo
 
 **Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
 
-**Open items.** End-to-end magic-link round trip was deferred at scaffold close because the Supabase built-in SMTP rate limit was hit during dashboard wiring. Slice 2 does not require an authenticated UI surface, so this verification step remains deferred. First slice that ships an admin UI (operator review, manual ingest trigger) closes the deferral.
+**Open items.** None. Slice 5 closed the magic-link round-trip deferral; the reader UI ships behind authenticated routes, exercising the full sign-in flow end-to-end. SMTP provider as-built: `[Supabase built-in / custom SMTP via Resend]` — fill at slice close. The decision is recorded inline in §Stage 8 and does not warrant a separate ADR.
+
+---
+
+# Stage 8 — Reader UI (as built)
+
+**Method.** Authenticated reader for meetings at `status = 'published'`. Single Next.js App Router app on Cloudflare Pages, reading Supabase via the SSR client. Read-only surface; no write paths or pipeline triggers from the reader. Stage 7 auth scaffold is reused — middleware refreshes the session cookie on every non-asset request, the SSR helper reads it.
+
+**URL structure.** Tenant-explicit from day one. The publication slug appears in every reader URL even though one publication is configured at v1, so existing URLs do not need to rewrite when a second tenant ships.
+
+```
+/login                                                              magic-link entry
+/auth/callback                                                      magic-link exchange
+/                                                                   redirects to the user's publication root
+/{publication.slug}                                                 town list
+/{publication.slug}/{town.slug}                                     board list
+/{publication.slug}/{town.slug}/{board.slug}                        meeting list (published only)
+/{publication.slug}/{town.slug}/{board.slug}/{meeting.id}           meeting page (hybrid layout)
+```
+
+Meeting URLs use `meeting.id` (uuid) rather than a slug. `meetings` carries no human-readable unique slug today and `meeting_date` is not unique within a board across schedule edits or special meetings; uuid is the only stable key. A future slice can introduce a date-plus-discriminator slug without breaking the existing uuid URLs (additive route).
+
+**Page composition.**
+
+- Town list — reads `towns WHERE publication_id = ?` (RLS-enforced). Each town links to its boards page.
+- Board list — reads `boards WHERE town_id = ?`.
+- Meeting list — reads `meetings WHERE board_id = ? AND status = 'published'`, ordered `meeting_date DESC`. Each row shows date, title, segment count.
+- Meeting page (hybrid layout):
+  - Header: meeting title, `meeting_date`, board name, town name, link to the YouTube source video.
+  - Summary block: `meetings.summary` rendered as prose at the top.
+  - Segments list: rows ordered by `sequence_order` (with `id` as a stable secondary key for any duplicate-order anomaly). Each segment renders as a card containing: title, marker_type badge, description, an embedded YouTube iframe deep-linked to the segment start, and the segment's `transcript_excerpt` (collapsed by default).
+
+The hybrid layout matches the locked product decision: summary at top, chaptered segments below, YouTube timestamp links as the V1 verification surface.
+
+**YouTube embed pattern.** Per-segment iframe with `?start={start_time_seconds}` in the URL, not page-level embed with JS-driven `seekTo`. Per `kb_video-timestamp-linking-ux_2026-04-29_v1` (parts: `implementation-patterns`, `tos-findings`, `ux-reference`): the `?start=` parameter is documented and reliable, and the IFrame API ready handshake required for `seekTo` adds implementation surface that the V1 verification-surface intent does not need. `?start=` resolves within ~2 seconds of the requested timestamp due to keyframe alignment; segment boundaries are already approximate at the ~30-second granularity the segmenter produces, so the keyframe drift is within tolerance.
+
+**B3 — YouTube unavailability handling.** The per-segment iframe is wrapped in a client component that listens for IFrame API `onError` events. On codes 100 (video removed), 101/150 (embedding disabled by owner), or 153 (live stream unavailable; rare for our corpus), the wrapper renders a fallback panel in place of the bare YouTube error UI: a status line ("Video unavailable"), the segment's `transcript_excerpt` un-collapsed (it becomes the only content surface), and a link to the YouTube watch page (which can still work when embedding is disabled — the user can verify directly). The wrapper does not mutate the database; only the player surface degrades. Per `kb_video-timestamp-linking-ux_2026-04-29_v1_youtube-unavailability`, the IFrame API does not distinguish "removed" from "made private," so the fallback copy stays generic.
+
+**Auth integration.** Reuses Stage 7 wiring. `apps/web/middleware.ts` refreshes the Supabase session cookie on every non-asset request and redirects unauthenticated requests to `/login` from any route outside `/login`, `/auth/callback`, and Next.js asset paths. Server components read via `createServerComponentClient` from `@supabase/ssr`; client components are used only where interactivity demands (the iframe-error wrapper, the optional collapsed-transcript toggle).
+
+**RLS expansion (Stage 5 pass 2 partial).** Adds membership-aware `authenticated` SELECT policies + matching table-level GRANTs on `publications`, `towns`, `boards`, `meetings`, `segments`, `memberships`. Policy shapes are detailed in §"Slice 5 schema deltas" above. Membership-aware in shape, flat in effect at single-tenant config: every authenticated user has one membership row, so the JOIN resolves to the same publication for everyone. The shape is the load-bearing piece — when a second tenant ships, the boundary already does the right thing without policy rewrite.
+
+**Bootstrap and edge cases.**
+
+- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; admin-side seeding (manual SQL at v1, future admin UI as part of B4) is the sole bootstrap path.
+- Direct URL access to a `meetings.id` at `status != 'published'`: 404. RLS hides the row from the SSR client; the page renders the standard not-found surface.
+- Direct URL with a publication/town/board slug the user has no membership for: 404 on the same RLS path.
+
+**Failure modes.**
+
+- Empty segments list on a published meeting: renders the summary alone with a note that no segments are available. Should not occur post-Slice-3 (the segmenter writes ≥1 segment or fails the row); guarded so a partial-write edge case does not break the page.
+- Transient Supabase auth-refresh failure mid-page: middleware catches, redirects to `/login`. The user re-authenticates and lands back at the requested URL via the `redirectTo` param.
+- YouTube iframe error: B3 fallback above.
+- Segment ordering anomaly (duplicate `sequence_order`): rendered in `(sequence_order, id)` order to keep the page deterministic across loads.
+
+**Email provider for magic-link delivery.** Slice 5 closes the Stage 7 deferral. Provider as-built: `[Supabase built-in SMTP / custom SMTP via Resend]` — this line gets filled at slice close based on whether the built-in tier holds at first real auth volume. If the built-in rate-limits during the slice build, the slice ships custom SMTP; otherwise it stays on built-in and a future slice migrates if volume demands.
+
+**Cost expectation at v1 scale.** Cloudflare Pages free tier covers the reader. Supabase reads are RLS-filtered SELECTs against indexed columns; no new vendor cost. Magic-link emails on the built-in tier are free within the rate cap; custom SMTP via Resend is ~$0/month at the small allowlist size (Resend's free tier is 100 emails/day, well above v1 need).
+
+**Locked decisions.** ADR 0020 — "Reader UI v1 ships without search."
 
 ---
 
@@ -534,12 +622,6 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 - **What:** Tighten `meetings.duration_seconds` to NOT NULL.
 - **Why:** Cron always populates the field at row creation; nullable column is a vestige of the pre-Slice-2 schema. A NOT NULL constraint catches future code paths that bypass cron (manual inserts, alternative ingestion sources) which would otherwise silently propagate a null through downstream code that assumes a value.
 - **Trigger:** B1 ships and any historical rows are backfilled. The constraint tightening is the contract step in an expand/contract cycle; B1 is the expand.
-
-## B3 — YouTube unavailability detection + fallback player surface
-
-- **What:** Reader UI handling for the case where the embedded YouTube video is no longer available (removed, private, embedding disabled). Detect via the IFrame API `onError` event (codes 100, 101, 150, 153) and present a graceful fallback rather than the bare YouTube error UI.
-- **Why:** V1 verification surface is YouTube timestamp links. If a board removes a video after publication, the timestamp links degrade silently — a user clicks through and sees only the YouTube error UI. KB `kb_video-timestamp-linking-ux_2026-04-29_v1_youtube-unavailability.xml` documents the error code semantics; codes 100/101/150 cover removed/private/embedding-disabled, and the IFrame API does not distinguish "removed" from "made private."
-- **Trigger:** Slice 5 (reader UI). The slice that builds the chaptered meeting page is the surface where this matters.
 
 ## B4 — Operator review gate at `review → published`
 
