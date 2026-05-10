@@ -1,7 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { ZodError } from 'zod';
 import type { Database } from '@duly-noted/db';
 import {
   buildSummaryUserPrompt,
+  SUMMARY_MAX_CHARS,
+  SUMMARY_MIN_CHARS,
   summaryJsonSchema,
   summaryOutputSchema,
   SUMMARIZATION_SYSTEM_PROMPT,
@@ -85,6 +88,29 @@ async function loadBoardAndTownNames(
   return { boardName: row.name, townName: town.name };
 }
 
+function parseSummaryWithLengthDetail(raw: unknown): { summary: string } {
+  try {
+    return summaryOutputSchema.parse(raw);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      const issue = err.issues[0];
+      if (issue && (issue.code === 'too_big' || issue.code === 'too_small')) {
+        const actualLen =
+          typeof raw === 'object' &&
+          raw !== null &&
+          'summary' in raw &&
+          typeof (raw as { summary: unknown }).summary === 'string'
+            ? (raw as { summary: string }).summary.length
+            : 'unknown';
+        throw new Error(
+          `summary length ${actualLen} out of bounds [${SUMMARY_MIN_CHARS}, ${SUMMARY_MAX_CHARS}]`,
+        );
+      }
+    }
+    throw err;
+  }
+}
+
 async function loadSegments(
   supabase: SupabaseClient<Database>,
   meetingId: string,
@@ -132,7 +158,7 @@ export async function runSummarizationOnce(deps: SummarizeDeps): Promise<Summari
       jsonSchema: summaryJsonSchema,
       maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
     });
-    const parsed = summaryOutputSchema.parse(raw);
+    const parsed = parseSummaryWithLengthDetail(raw);
 
     const { error: completeErr } = await deps.supabase.rpc('complete_summarization', {
       p_meeting_id: meeting.id,

@@ -216,21 +216,28 @@ describe('runSummarizationOnce', () => {
     expect(failPatch).toBeDefined();
   });
 
-  it('marks failed when the LLM output fails Zod length validation', async () => {
+  it('marks failed with enriched message when the LLM output fails Zod length validation', async () => {
     const { client, rpcCalls, updateCalls } = makeStubClient({
       claimRow: baseClaim,
       boardLookup: baseBoard,
       segments: baseSegments,
     });
-    const callStructured: CallStructured = vi.fn().mockResolvedValueOnce({ summary: 'too short' });
+    const tooShort = 'too short';
+    const callStructured: CallStructured = vi.fn().mockResolvedValueOnce({ summary: tooShort });
 
     const outcome = await runSummarizationOnce({ supabase: client, callStructured });
 
     expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.message).toBe(`summary length ${tooShort.length} out of bounds [200, 2000]`);
+    }
     expect(callStructured).toHaveBeenCalledTimes(1);
     expect(rpcCalls.some((c) => c.fn === 'complete_summarization')).toBe(false);
     const failPatch = updateCalls.find((c) => c.patch.status === 'failed');
     expect(failPatch).toBeDefined();
+    expect(failPatch!.patch.last_error).toBe(
+      `summary length ${tooShort.length} out of bounds [200, 2000]`,
+    );
   });
 
   it('marks failed when the LLM call throws (post-retry exhaustion)', async () => {
