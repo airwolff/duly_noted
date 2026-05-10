@@ -2,6 +2,12 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@duly-noted/db';
 import { loadEnv } from '@/lib/env.js';
 
+const PUBLIC_PATHS = ['/login', '/auth/callback'];
+
+function isPublic(pathname: string): boolean {
+  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
+
 export async function middleware(request: NextRequest) {
   const env = loadEnv();
   const response = NextResponse.next({ request });
@@ -20,8 +26,16 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  await supabase.auth.getUser();
-  return response;
+  const { data } = await supabase.auth.getUser();
+  if (data.user) return response;
+  if (isPublic(request.nextUrl.pathname)) return response;
+
+  const loginUrl = new URL('/login', request.url);
+  loginUrl.searchParams.set('redirectTo', request.nextUrl.pathname + request.nextUrl.search);
+  // Preserve refreshed session cookies on the redirect response —
+  // dropping `response.headers` is the documented Supabase-SSR gotcha
+  // where the user bounces between /login and the target on every load.
+  return NextResponse.redirect(loginUrl, { headers: response.headers });
 }
 
 export const config = {
