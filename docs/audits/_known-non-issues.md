@@ -172,3 +172,19 @@ keep the entry — do not delete. The history is the value.
 - Scope: supabase/migrations/ (claim_summarizing_meeting, claim_segmenting_meeting); apps/worker/src/pipeline/summarize.ts, segment.ts
 - Reasoning: `claim_summarizing_meeting` returns `youtube_id` which `runSummarizationOnce` does not read; `claim_segmenting_meeting` returns `duration_seconds` which `runSegmentationOnce` does not read. The asymmetry is intentional: claim RPCs return a row-identity dump to insulate the schema from future handler additions (B5 transcript-aware summarization, re-summarize handlers, ops tooling) that may want the spare columns without requiring an RPC return-type migration. Trimming would require retroactive migrations on both Slice 3 and Slice 4 schemas with zero behavioral change. The spare-column cost (~36 bytes per claim, ~24 claims/year/handler) is negligible.
 - Revisit when: Either (a) a future handler ships and the claim RPC needs columns the current shape doesn't provide, surfacing the migration-deferral cost; or (b) a slice introduces a third claim RPC and the convention's coherence is questioned during planning.
+
+## NI-018: Speculative exports retained in apps/web/src/lib/resolvers.ts
+- Status: Accepted
+- Source: docs/audits/2026-05-10-slice-5-reader-ui.md — F-NIT-1
+- Date accepted: 2026-05-10
+- Scope: apps/web/src/lib/resolvers.ts
+- Reasoning: `resolveBoard` is exported but only called from `resolveBoardChain` in the same file; `PubRef`, `TownRef`, `BoardRef` interfaces are exported but used only as parameter/return types of internal functions. Dead-export cost is one line per symbol; trim-now risk is removing a public-surface signal that a future board page (not going through the full chain resolver) or a future admin surface taking a typed Ref would want. Same pattern as NI-014's barrel-export reasoning, scoped to apps/web/src/lib/resolvers.ts.
+- Revisit when: Next consumer of `apps/web/src/lib/resolvers.ts` outside the file itself ships — audit the actual consumed surface and trim what didn't materialize.
+
+## NI-019: Speculative export retained in apps/web/src/lib/sort-segments.ts
+- Status: Accepted
+- Source: docs/audits/2026-05-10-slice-5-reader-ui.md — F-NIT-2
+- Date accepted: 2026-05-10
+- Scope: apps/web/src/lib/sort-segments.ts
+- Reasoning: `SortableSegment` is exported but used only as the generic constraint of `sortSegments` in the same file. Shape (`{sequence_order: number, id: string}`) is generically useful for any code that sorts or paginates segments. Same reasoning pattern as F-NIT-1 and NI-014; scoped to this file.
+- Revisit when: Next consumer of `apps/web/src/lib/sort-segments.ts` outside the file itself ships — audit the actual consumed surface and trim if unused.
