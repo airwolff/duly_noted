@@ -1,10 +1,12 @@
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '@duly-noted/db';
 import {
+  DESCRIPTION_MAX_LEN,
   STEP_1_SYSTEM_PROMPT,
   STEP_2_SYSTEM_PROMPT,
   STEP_3_SYSTEM_PROMPT,
+  TITLE_MAX_LEN,
   buildTTokenInput,
   parseTTokenIndex,
   step1JsonSchema,
@@ -106,6 +108,31 @@ function chunkLines(text: string, maxChars: number): string[] {
     chunks.push(current.join('\n'));
   }
   return chunks;
+}
+
+function parseStep3WithLengthDetail(raw: unknown): { title: string; description: string } {
+  try {
+    return step3OutputSchema.parse(raw);
+  } catch (err) {
+    if (err instanceof ZodError) {
+      const issue = err.issues[0];
+      if (issue && (issue.code === 'too_big' || issue.code === 'too_small')) {
+        const field = issue.path[0];
+        if (field === 'title' || field === 'description') {
+          const max = field === 'title' ? TITLE_MAX_LEN : DESCRIPTION_MAX_LEN;
+          const actualLen =
+            typeof raw === 'object' &&
+            raw !== null &&
+            field in raw &&
+            typeof (raw as Record<string, unknown>)[field] === 'string'
+              ? (raw as Record<string, string>)[field]!.length
+              : 'unknown';
+          throw new Error(`${field} length ${actualLen} out of bounds [1, ${max}]`);
+        }
+      }
+    }
+    throw err;
+  }
 }
 
 async function claimSegmentingMeeting(
@@ -241,7 +268,7 @@ async function generateTitlesAndDescriptions(
       jsonSchema: step3JsonSchema,
       maxTokens: 1024,
     });
-    const parsed = step3OutputSchema.parse(raw);
+    const parsed = parseStep3WithLengthDetail(raw);
 
     const startUtt = utterances[startIdx];
     const endUtt = utterances[endIdx];

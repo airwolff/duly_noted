@@ -179,6 +179,35 @@ describe('runSegmentationOnce', () => {
     expect(failPatch).toBeDefined();
   });
 
+  it('marks failed with enriched message when step 3 returns an oversize title', async () => {
+    const { client, updateCalls } = makeStubClient({
+      claimRow: {
+        id: 'meeting-5',
+        transcript_url: 'meetings/meeting-5/transcript.json',
+        duration_seconds: 600,
+      },
+      transcriptJson: synthTranscript,
+    });
+    const oversizeTitle = 'x'.repeat(121);
+    const callStructured: CallStructured = vi
+      .fn()
+      .mockResolvedValueOnce({
+        markers: [{ marker_type: 'AGENDA_ITEM', start_token: '[T0]' }],
+      })
+      .mockResolvedValueOnce({ end_token: '[T2]' })
+      .mockResolvedValueOnce({ title: oversizeTitle, description: 'Discussion of the budget.' });
+
+    const outcome = await runSegmentationOnce({ supabase: client, callStructured });
+
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.message).toBe('title length 121 out of bounds [1, 120]');
+    }
+    const failPatch = updateCalls.find((c) => c.patch.status === 'failed');
+    expect(failPatch).toBeDefined();
+    expect(failPatch!.patch.last_error).toBe('title length 121 out of bounds [1, 120]');
+  });
+
   it('marks failed when step 1 returns a T-token not in the lookup', async () => {
     const { client, updateCalls } = makeStubClient({
       claimRow: {
