@@ -16,14 +16,14 @@ Postgres is the queue. The Render worker advances meeting state by polling rows 
 State machine on `meetings.status`:
 
 ```
-discovered → pending → extracting → transcribing → segmenting → chaptering → summarizing → review → published
-                                                                                           ↘  failed
+discovered → pending → extracting → transcribing → segmenting → summarizing → review → published
+                                                                              ↘  failed
 ```
 
 - **Cron Job** writes new `discovered` rows from YouTube Data API responses, then auto-promotes to `pending` based on per-board title pattern + minimum duration.
 - **Worker** picks up `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `yt-dlp` to extract audio, uploads to Supabase Storage, submits a signed Storage URL to AssemblyAI, and parks the row at `transcribing`.
 - **Supabase Edge Function** (`asr-webhook`) receives the AssemblyAI callback, verifies the `X-DulyNoted-Webhook` auth header, fetches the full transcript JSON from AssemblyAI, writes the artifact to Storage, advances state to `segmenting`. The Edge Function is the only surface that holds both `ASR_VENDOR_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` simultaneously; this is the architecturally chosen surface for the receiver.
-- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`, runs summary pass, advances to `review`. Operator review (deferred or included is a Stage 4 decision) gates `review → published`.
+- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → review → published` in a single transaction. Operator review gate at `review → published` is deferred to a future slice (see Backlog B4); the `review` state slot is preserved in the enum for that slice.
 
 Failure semantics: any step that errors writes `status = 'failed'`, a `last_error` field, and `failed_at`; the worker re-polls `failed` rows only on manual reset (no automatic retry storms). Worker invocations are idempotent — picking up the same row twice never double-charges the ASR vendor or double-writes a segment.
 
@@ -61,7 +61,8 @@ Source of truth: Dashlane vault. No secrets in any repo.
 > set of keys each surface will require when all stages are complete. Keys are
 > added to a surface's Zod env schema only in the slice that introduces the
 > consuming code. `ANTHROPIC_API_KEY` enters the worker's Zod env schema in
-> Slice 3 (segmentation pipeline; see Stage 4 below).
+> Slice 3 (segmentation pipeline; see Stage 4 below) and is reused in Slice 4
+> (summarization; see Stage 6 below) without further env changes.
 
 Per-surface secret list:
 
@@ -115,8 +116,8 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
 - ~~Stage 4: segmentation methodology~~ — closed in Stage 4 below.
-- Operator review step inclusion sets the `review` state semantics. Pending; Slice 3 retains automatic advance through `segmenting → summarizing → review`, defers the `review → published` gate to the slice that builds the operator review UI.
-- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3 deltas in Stage 5 below cover the ingest+segmentation-load-bearing subset; pass 2 still pending.
+- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → review → published`. Operator review gate deferred (Backlog B4).
+- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3/4 deltas in Stage 5 below cover the ingest+segmentation+summarization-load-bearing subset; pass 2 still pending.
 
 ---
 
@@ -233,31 +234,82 @@ Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no re
 
 **Timestamp scheme.** `[T{integer}]` synthetic tokens (Oberoi 3/3-corroborated approach). Real timestamps from AssemblyAI's `utterances[]` array (millisecond `start` field) are replaced with sequential `[T0]`, `[T1]`, `[T2]`… tokens injected ahead of every utterance in the LLM input. An out-of-band lookup table maps T-indices back to real timestamps. The LLM is instructed to reference and return only T-tokens. This eliminates the documented hallucination class where LLMs fabricate plausible-looking timestamps not present in the transcript. Token injection logic and lookup table builder live in `packages/shared/src/segmentation/t-tokens.ts`.
 
-**Chunking.** `CHUNK_MAX_CHARS = 24_000` is the intentional conservative target (~6.5K tokens at ~3.7 chars/token average). The ~20% margin under the nominal 8K-token-per-chunk budget guards against tokenizer variance (the ~35% Opus 4.7 inflation noted below) and ensures the system prompt + chunk + structured output overhead stays well within the model's input window. Cost overhead at v1 volume (~24 meetings/year, ~12 chunks/meeting) is negligible.
-
 **LLM.**
 
 - Model: `claude-opus-4-7` (Anthropic flagship as of 2026-04-16).
 - Tokenizer note: Opus 4.7 ships with an updated tokenizer that can produce up to ~35% more tokens for the same input text vs. Opus 4.6. Cost projections in this section are inflated accordingly.
+- Adaptive thinking: Opus 4.7 has adaptive thinking always on; the `temperature` parameter is not accepted by the API and must be omitted from request bodies. Effort levels are `low`, `medium`, `high`, `xhigh`, `max`; default adaptive is the v1 choice.
 - List pricing (2026-05): $5/M input, $25/M output. Prompt caching reduces cached input to $0.50/M (90% off). Batch API: 50% off both legs.
 - API surface: `apps/worker` calls Anthropic SDK directly. `ANTHROPIC_API_KEY` enters the worker Zod env schema in Slice 3.
 
-**Output enforcement.** Anthropic native structured outputs (`output_config.format` with JSON schema, GA on Opus 4.7 / Sonnet 4.6 / Sonnet 4.5 / Opus 4.5 / Haiku 4.5). The `instructor` library Oberoi used with OpenAI is not a dependency. Constrained decoding guarantees schema conformance; it does not guarantee factual accuracy. Per CLAUDE.md §6, every LLM output is also Zod-validated before any DB write. JSON schemas live in `packages/shared/src/segmentation/schemas.ts`; Zod schemas mirror them. T-token validator: rejects any returned token not present in the lookup table for the meeting under processing.
+**Output enforcement.** Anthropic native structured outputs (`output_config.format` with JSON schema, GA on Opus 4.7 / Sonnet 4.6 / Sonnet 4.5 / Opus 4.5 / Haiku 4.5; the legacy beta `output_format` and `anthropic-beta: structured-outputs-2025-11-13` header are not used). The `instructor` library Oberoi used with OpenAI is not a dependency. Constrained decoding guarantees schema conformance; it does not guarantee factual accuracy. Per CLAUDE.md §6, every LLM output is also Zod-validated before any DB write. JSON schemas live in `packages/shared/src/segmentation/schemas.ts`; Zod schemas mirror them. T-token validator: rejects any returned token not present in the lookup table for the meeting under processing. Schema-level constraints not supported by Anthropic's structured outputs (`minLength`, `maxLength`, `minimum`, `maximum`, recursive schemas) live in Zod only.
 
-**State transition.** Worker picks up `meetings.status = 'segmenting'` with `SELECT … FOR UPDATE SKIP LOCKED`, runs the three-step pipeline, writes N rows to `segments` in a single transaction with `UPDATE meetings SET status = 'summarizing'`. No operator gate at this transition. The gate (if any) lands at `review → published` and is deferred to the operator review UI slice.
+**State transition.** Worker picks up `meetings.status = 'segmenting'` with `SELECT … FOR UPDATE SKIP LOCKED`, runs the three-step pipeline, writes N rows to `segments` in a single transaction with `UPDATE meetings SET status = 'summarizing'`. No operator gate at this transition.
 
 **Failure modes.**
 
 - LLM returns a T-token not in the lookup table: Zod validator rejects, worker writes `status = 'failed'`, `last_error` captures the offending token, manual reset required.
-- Sub-second utterance rounding can produce `Math.floor(startUtt.start / 1000) === Math.ceil(endUtt.end / 1000)` at the worker's T-token-to-seconds resolution step. The worker coerces `endSec = startSec + 1` to satisfy the `end_time_seconds > start_time_seconds` CHECK constraint and emits a `console.warn` with the meeting id, segment `sequence_order`, and original millisecond bounds. The row does not fail. (Under the T-token scheme the LLM never emits seconds; this artifact is purely worker-side.)
-- Anthropic API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row.
+- LLM returns a chapter with `start_time_seconds >= end_time_seconds`: Zod validator rejects, same handling.
+- Anthropic API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row. Honor `retry-after` / `retry-after-ms` response headers when present in preference to the fixed schedule.
 - Empty `utterances[]` array in the transcript artifact: worker fails the row at pickup before any LLM call.
 - Step 1 returns zero markers for a chunk: that chunk produces no chapters (acceptable; not a failure).
-- Step 1 returns zero markers across every chunk of the transcript: meeting fails (`status = 'failed'`, `last_error` records the empty-marker condition, manual reset required). Per-chunk zero markers remains acceptable (above); full-transcript zero indicates an ASR or pipeline fault. A real meeting always produces at least one `PROCEDURE` marker (call-to-order, adjournment).
 
 **Cost expectation at v1 scale.** Lincolnville Select Board ~24 meetings/year × ~2 hr/meeting. Per-meeting estimate: ~100K input + ~15K output tokens across all three passes (after Opus 4.7 tokenizer inflation) ≈ $1.20/meeting ≈ ~$29/year. Bounded.
 
 **Locked decisions:** see ADRs 0014–0018.
+
+---
+
+# Stage 6 — Summarization
+
+**Method.** Single LLM call per meeting producing a meeting-level summary. Input is the meeting's segments (title + marker_type + description + transcript_excerpt per row, ordered by `sequence_order`) plus meeting/board/town metadata. Output is one prose summary stored on the meeting row.
+
+The chapter-level summarization Oberoi performs as a separate prompt is already covered by Stage 4 Step 3 (title + 1–2 sentence description per chapter). Stage 6 does not re-deepen those; reader UI cards consume the Stage 4 output directly. Whether per-chapter description deepening is worthwhile is unproven and deferred until reader UI testing surfaces a quality gap.
+
+The summary input is segments-only at v1 — the handler does not open `transcript.json`. Whether transcript-aware summarization yields meaningfully better quality is an unproven hypothesis; see Backlog B5 for the eval-script approach to test both paths offline before committing to the heavier production handler.
+
+**Hallucination guardrails.** Three layers, in priority order:
+
+1. **Entity grounding (Oberoi pattern).** The system prompt enumerates the meeting's known entities — board name, town name, board members where known, agenda item titles parsed from the segment list — and instructs the LLM to ground all claims (names, votes, decisions, dollar amounts, dates) in the supplied segment context only. The Oberoi metadata-grounding pattern (KB `kb_hallucination-mitigation-summarization` C2/C3) addresses the documented failure mode where LLMs fabricate plausible-looking attributes and chain reasoning off the fabrication.
+2. **Schema enforcement.** Anthropic structured outputs constrain the response shape; Zod validates the parsed object before any DB write.
+3. **Length bounds.** Zod-enforced (not in the JSON schema, since `minLength`/`maxLength` are not supported by Anthropic's structured outputs). Summary length must fall within configured min/max — out-of-bounds output triggers retry per the failure modes below, and on persistent failure the row goes to `status = 'failed'`.
+
+Heavier post-hoc verification (RAGAS Faithfulness, claim-to-segment alignment scoring, multi-LLM consensus) stays deferred to V2 per CLAUDE.md §7.
+
+**Methodology note.** Oberoi's documented pattern is "a separate prompt generates the meeting summary from chapters plus transcript, with human edit before publication" (KB `kb_transcript-segmentation-methodology` A2). V1 deviates on two axes: (1) segments-only input rather than chapters-plus-transcript (see B5), and (2) no human edit before publication (see B4). Both deviations are deliberate MVP scope cuts with explicit revisit triggers in the Backlog.
+
+**LLM.**
+
+- Model: `claude-opus-4-7`. Same model as Stage 4. Reusing the Slice 3 wiring eliminates per-stage model selection complexity at v1; cost differential vs. Sonnet 4.6 is negligible at ~24 calls/year.
+- Tokenizer, pricing, adaptive thinking, structured outputs, retry/header-honoring policy: identical to Stage 4 above.
+
+**Output enforcement.** Native structured outputs with a JSON schema for `{ summary: string }`. Zod schema mirrors it and additionally enforces length bounds. JSON + Zod schemas live in `packages/shared/src/summarization/schemas.ts`.
+
+**State transition.** Worker picks up `meetings.status = 'summarizing'` with `SELECT … FOR UPDATE SKIP LOCKED`, runs the summarization call, writes the summary in a single transaction:
+
+```sql
+UPDATE meetings
+   SET summary = $1,
+       summary_generated_at = now(),
+       status = 'published',
+       updated_at = now()
+ WHERE id = $2
+   AND status = 'summarizing'
+```
+
+The single transition `summarizing → published` (skipping `review`) reflects the v1 "no operator gate" decision. The `review` enum value is preserved for the future operator review UI slice (Backlog B4); no row should sit in `review` at v1.
+
+**Failure modes.**
+
+- Anthropic API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row. Honor `retry-after` / `retry-after-ms` response headers when present in preference to the fixed schedule.
+- Schema-shape validation failure (Anthropic-side, expected to be impossible with structured outputs but covered defensively): Zod rejects, worker writes `status = 'failed'`, `last_error` captures the validation message, manual reset required.
+- Length-bound violation: same handling — fails the row with `last_error` recording the actual length and the configured bounds.
+- Empty `segments` array at pickup: worker fails the row before any LLM call. Should not occur post-Slice-3 (segmenting writes ≥1 segment or fails the row); guarded defensively because the LLM call without context produces meaningless output.
+- Successful call but model-flagged refusal (rare): worker fails the row with `last_error` capturing the refusal reason.
+
+**Cost expectation at v1 scale.** ~24 meetings/year × 1 call/meeting. Per-meeting estimate: ~10K input tokens (segment list with excerpts; well below transcript size) + ~500 output tokens (one prose summary) after tokenizer inflation ≈ $0.06/meeting ≈ ~$1.50/year. Negligible.
+
+**Locked decisions.** No new ADRs required at Slice 4. Stage 6 reuses Stage 4's locked decisions on model choice (ADR 0014), structured outputs surface (ADR 0018), and overall LLM-call discipline. The "v1 auto-advance with no operator gate" stance is a SPEC-level closure of an open item, not an ADR — if that stance becomes contested when Backlog B4 reopens, an ADR captures the resolution then.
 
 ---
 
@@ -276,7 +328,7 @@ The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) r
 | `meetings`         | The pipeline state row                         | `id uuid pk`, `board_id uuid fk`, `status meeting_status` (default `'discovered'`), `youtube_id text`, `meeting_date date`, `last_error text`, `created_at`, `updated_at` |
 | `memberships`      | User ↔ publication join with role              | `user_id uuid → auth.users`, `publication_id uuid fk`, `role text check in ('reader','editor','admin')`, unique `(user_id, publication_id)`                               |
 
-**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, chaptering, summarizing, review, published, failed`.
+**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, summarizing, review, published, failed`.
 
 **Identity.** No `public.users` table. `auth.users` is canonical; `memberships.user_id` joins against it directly. A `public.profiles` table can be added in pass 2 if profile fields land on the roadmap.
 
@@ -352,8 +404,6 @@ Slice 2 follow-up extended `service_role` SELECT grants to `publications`, `town
 
 Additive, single migration file `NNNN_slice_3_segmentation_schema.sql`, backwards-compatible with the previously deployed worker.
 
-**Enum addition.** `public.meeting_status` gains `'chaptering'`, positioned between `'segmenting'` and `'summarizing'`. This is a transient state held only while LLM work runs outside Postgres (Step 1 marker extraction → Step 2 chapter boundaries → Step 3 title/description). It is structurally identical to the Slice 2 `'extracting'` transient — both are forced by Postgres (a transaction cannot remain open across a multi-minute LLM call) and gate re-claim by other workers via the status filter on `claim_segmenting_meeting`. The `complete_segmentation` RPC atomically performs INSERT-N-segments + `UPDATE meetings SET status = 'summarizing'`, satisfying the Stage 4 "single transaction" constraint at the data-write boundary.
-
 **New table `segments`:**
 
 ```sql
@@ -408,6 +458,27 @@ create table public.segments (
 
 Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments`, membership-aware RLS on every table.
 
+## Slice 4 schema deltas
+
+Additive, single migration file `NNNN_slice_4_summarization_schema.sql`, backwards-compatible with the previously deployed worker.
+
+**Meetings table additions:**
+
+- `summary text` (nullable; populated when summarization succeeds and the row advances to `published`)
+- `summary_generated_at timestamptz` (nullable; populated in the same `UPDATE` that writes `summary`)
+
+Both columns are nullable indefinitely — historical rows that pre-date Slice 4 (none exist in production at the time of this slice, but the constraint matters for replay) carry NULL values until re-run, and rows that fail the summarization step never receive values. NOT NULL is deferred until and unless backfill completes; no Backlog entry needed because the nullable shape is correct as-is.
+
+**Indexes.** None added. The summary column is reader-UI-rendered, not queried. No `WHERE summary IS NOT NULL` filter is needed at the database layer (the existing `WHERE status = 'published'` policy already filters to rows that successfully completed summarization).
+
+**Trigger.** `set_updated_at()` already applies to `meetings` from Slice 2; the new columns are covered.
+
+**RLS.** No new policy. The existing `authenticated` SELECT-where-status-published policy on `meetings` covers the new columns. Same pass-2 tenant-boundary deferral applies (NI-008).
+
+**Storage bucket.** No new bucket. Summary lives entirely in Postgres.
+
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships), membership-aware RLS on every table.
+
 ---
 
 # Stage 7 — auth subset (as built)
@@ -437,55 +508,38 @@ The service-role key, the ASR vendor key, and the webhook secret never reach Clo
 
 **Open items.** End-to-end magic-link round trip was deferred at scaffold close because the Supabase built-in SMTP rate limit was hit during dashboard wiring. Slice 2 does not require an authenticated UI surface, so this verification step remains deferred. First slice that ships an admin UI (operator review, manual ingest trigger) closes the deferral.
 
-## Backlog / Slice candidates
+---
 
-Observations and design considerations that surfaced outside slice
-scope. Each item lists what, why, and the trigger that should
-promote it into an upcoming slice. Items are cut from this section
-when a slice picks them up.
+# Backlog / Slice candidates
 
-### B1 — duration_seconds source of truth
+Operational discoveries and deferred follow-ups that don't fit any of: wont-fix, audit finding, or current-slice fix. Each entry has three lines: What, Why, Trigger. Items are cut from the Backlog when a slice picks them up; git history preserves the entry, the live SPEC.md tracks only unaddressed work.
 
-What: replace or cross-check `meetings.duration_seconds` (currently
-written by `worker-cron` from `videos.list` `contentDetails.duration`)
-with AssemblyAI's `audio_duration` field, which is present in every
-transcript JSON.
+## B1 — `meetings.duration_seconds` cross-check against AssemblyAI `audio_duration`
 
-Why: AssemblyAI's value reflects what was actually transcribed,
-survives YouTube takedowns, and avoids the ISO 8601 parse path
-that already produced one bug (P0D fix). Demonstrated by row
-a669dadb-816f-44a2-8d6c-54a6e2197ca1 (Lincolnville, 2026-05-08
-discovery): YouTube video taken down post-extraction, cron's value
-unrecoverable, AssemblyAI's value (2506) backfilled manually.
+- **What:** Replace or cross-check `meetings.duration_seconds` (set by cron from YouTube `videos.list contentDetails.duration`) with AssemblyAI's `audio_duration` field from `transcript.json`. AssemblyAI's value is authoritative for any chronology work that derives from the actual audio submitted to ASR.
+- **Why:** Discrepancies surfaced during Slice 3 verification on meeting `a669dadb-816f-44a2-8d6c-54a6e2197ca1` (segmented end-to-end at 2026-05-09T21:38:15Z). YouTube's `contentDetails.duration` reflects the published video; AssemblyAI's `audio_duration` reflects the audio actually transcribed. They can drift on edited or re-encoded uploads.
+- **Trigger:** Next worker handler that opens `transcript.json` for any reason. Slice 4 (summarization) runs segments-only and does not open the file, so B1 does not bundle into Slice 4. Likely natural triggers: B5 (transcript-aware summarization, if it ships) or any V2 grounding/verification work that needs raw transcript text.
 
-Trigger: Slice 4 (summarization) handler already opens the
-transcript JSON; minimal cost to write `audio_duration` back to
-`meetings.duration_seconds` in the same transaction. Bundle there.
+## B2 — NOT NULL on `meetings.duration_seconds`
 
-### B2 — NOT NULL constraint on duration_seconds
+- **What:** Tighten `meetings.duration_seconds` to NOT NULL.
+- **Why:** Cron always populates the field at row creation; nullable column is a vestige of the pre-Slice-2 schema. A NOT NULL constraint catches future code paths that bypass cron (manual inserts, alternative ingestion sources) which would otherwise silently propagate a null through downstream code that assumes a value.
+- **Trigger:** B1 ships and any historical rows are backfilled. The constraint tightening is the contract step in an expand/contract cycle; B1 is the expand.
 
-What: once B1 ships and a reliable write path always populates
-`duration_seconds`, add a `NOT NULL` constraint via migration.
+## B3 — YouTube unavailability detection + fallback player surface
 
-Why: makes the field load-bearing for downstream consumers
-(in-bounds checks, reader UI duration display, search ranking by
-meeting length).
+- **What:** Reader UI handling for the case where the embedded YouTube video is no longer available (removed, private, embedding disabled). Detect via the IFrame API `onError` event (codes 100, 101, 150, 153) and present a graceful fallback rather than the bare YouTube error UI.
+- **Why:** V1 verification surface is YouTube timestamp links. If a board removes a video after publication, the timestamp links degrade silently — a user clicks through and sees only the YouTube error UI. KB `kb_video-timestamp-linking-ux_2026-04-29_v1_youtube-unavailability.xml` documents the error code semantics; codes 100/101/150 cover removed/private/embedding-disabled, and the IFrame API does not distinguish "removed" from "made private."
+- **Trigger:** Slice 5 (reader UI). The slice that builds the chaptered meeting page is the surface where this matters.
 
-Trigger: B1 ships. Bundle the migration.
+## B4 — Operator review gate at `review → published`
 
-### B3 — YouTube unavailability detection and fallback
+- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → review → published` in Stage 6 with no human gate.
+- **Why:** Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
+- **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught, or (b) the slice that builds an admin/operator UI for any reason picks up the review surface alongside. Whichever fires first.
 
-What: detect when a published meeting's YouTube video becomes
-unavailable, mark the row, and serve the audio file from Storage
-through a custom HTML5 player with the same timestamp-linking
-semantics.
+## B5 — Transcript-aware meeting summarization
 
-Why: V1's locked verification surface is YouTube timestamp links
-(per ADR for Slice 5 verification surface). Row
-a669dadb-816f-44a2-8d6c-54a6e2197ca1 is the project's first live
-instance of the failure mode. The KB has prior research:
-`kb_video-timestamp-linking-ux_2026-04-29_v1_youtube-unavailability.xml`
-and `kb_video-timestamp-linking-ux_2026-04-29_v1_fallback-embed-impl.xml`.
-
-Trigger: Slice 5 reader UI design. Use the existing dead-video
-row as the development test case.
+- **What:** Alternative summarization path where the handler reads `transcript.json` and passes raw transcript context to the LLM call alongside (or instead of) the segments-only input shipped in Slice 4. Bundles B1 (handler is opening `transcript.json` anyway).
+- **Why:** Slice 4 ships segments-only summarization on the hypothesis that segment titles + descriptions + transcript_excerpts carry enough context for a faithful meeting summary. Whether richer context from the raw transcript yields meaningfully better quality is unproven. Bundling transcript-read into the production handler couples B1 and adds I/O + token cost without quality evidence.
+- **Trigger:** Run an offline eval first. Add `apps/worker/scripts/eval-summary-prompts.ts` (one-off, not on the hot path; reads a `meeting_id`, runs both prompts — segments-only vs. transcript-aware — against the same Anthropic call, dumps both summaries side-by-side for human comparison). Run on 3–5 representative meetings spanning marker-type distribution. If transcript-aware wins consistently, ship B5 as a slice (which automatically ships B1). If the segments-only summary is qualitatively comparable, B5 stays deferred and the eval script is the durable record of "we tested both ways."
