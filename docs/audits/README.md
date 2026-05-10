@@ -1,105 +1,97 @@
 # Audits
 
-Post-session audits of `duly_noted` and the registry of accepted
-wont-fixes. This directory is the operative record of code-quality
-findings, separate from `SPEC.md` (the spec) and `docs/adr/` (when
-added, for architecture decisions).
+This directory holds compliance audits of the duly_noted codebase
+and the artifacts that capture how their findings were resolved.
 
-This file documents the audit directory convention. For the broader
-build cycle (plan → build → audit → triage → promote → fix → re-audit),
-see `docs/workflows/build-cycle.md`.
+## File types
 
-## Why this exists
+### Source audits
 
-Claude Code sessions can fabricate paths, drift from `CLAUDE.md`
-rules, leave half-finished approaches in place, and produce
-migrations that work locally but fail on redeploy. A fresh session
-acting as a cold reviewer catches these. Persisting the findings
-lets the next session — human or AI — skip what's already been
-decided and focus on what's new.
+`<YYYY-MM-DD>-<slug>.md`
 
-## Layout
+A read-only record of one audit run by Claude Code. Lists findings,
+questions for human, reopen candidates, and what NOT to fix. The
+audit file is never modified after the audit session writes it; any
+human decisions about its findings live in the fix-brief and the
+known-non-issues registry, not in the audit file itself.
 
-- `YYYY-MM-DD-<scope-slug>.md` — dated audit reports. Append-only.
-  Never edit a past audit; produce a new one if circumstances change.
-- `_known-non-issues.md` — registry of findings explicitly accepted
-  as wont-fix. Live document, append-only entries with stable IDs.
-- `README.md` — this file.
+Examples:
+- `2026-05-09-slice-3-segmentation.md`
+- `2026-05-10-slice-3-fix-reaudit.md`
 
-## The cycle
+### Fix briefs
 
-1. **Audit.** After a meaningful slice of work, start a fresh Claude
-   Code session and run the audit prompt (read-only on source,
-   writes one file to this directory). The audit reads
-   `_known-non-issues.md` first and skips items already accepted.
-2. **Triage.** Read the audit. For each finding, decide: fix now,
-   defer, or accept as wont-fix.
-3. **Promote.** Accepted wont-fixes get appended to
-   `_known-non-issues.md` with a citation back to the originating
-   audit. Use the promotion prompt (see below).
-4. **Fix.** Run a separate Claude Code session to implement
-   approved fixes. Never let the audit session also fix — that
-   collapses the cold-reviewer benefit.
-5. **Re-audit.** After fixes land, re-audit the same scope to
-   verify and catch regressions.
+`<audit-stem>-fix-brief.md`
 
-This is the audit-triage-fix loop only. The full slice cycle (which
-wraps this loop with planning and spec amendments) is in
-`docs/workflows/build-cycle.md`.
+Triage outcome from the Claude project: a list of fix-now items
+from the source audit, organized by work stream (code fixes vs
+SPEC updates vs other) with file:line references and concrete
+CC-ready instructions per item. Brief is immutable once committed;
+it forms the paper trail linking an audit's findings to the human's
+decisions.
 
-## Filename conventions
+A fix-brief is committed for every triaged audit, even if every
+item was triaged as wont-fix — in that case the brief contains a
+header noting all items were accepted as wont-fix and pointing to
+the resulting NI entries. The 1:1 audit-to-brief mapping makes the
+directory listing self-describing.
 
-- Audits: `YYYY-MM-DD-<scope-slug>.md`
-  Examples: `2026-05-05-spine-scaffold.md`,
-  `2026-06-12-ingestion-pipeline.md`
-- Slug describes the scope, not the verdict. Date carries the
-  ordering; don't number them.
+Examples:
+- `2026-05-09-slice-3-segmentation-fix-brief.md`
+- `2026-05-10-slice-3-fix-reaudit-fix-brief.md`
 
-## Findings vs questions
+### Known non-issues registry
 
-Audits separate two buckets:
+`_known-non-issues.md`
 
-- **Findings** are defects verifiable against `SPEC.md`, `CLAUDE.md`,
-  or external ground truth. Confidence floor 80.
-- **Questions for human** are items where the code is internally
-  consistent but the intent is unclear. The audit cannot resolve
-  these alone.
+Append-only registry of accepted wont-fixes. Each entry has a
+stable NI-NNN ID, reasoning, and a revisit trigger. Entries are
+never edited or deleted; they are promoted out (to `SPEC.md` or
+to an ADR under `docs/adr/`) or marked `Withdrawn` when
+circumstances change. Audits read this file first to skip
+already-accepted items.
 
-A "question" that you answer "yes, deferred to Slice N" typically
-graduates to a `_known-non-issues.md` entry.
+## Wont-fix briefs are not committed
 
-## Promotion paths out of `_known-non-issues.md`
+Triage in the Claude project produces wont-fix entries with
+reasoning + revisit triggers. These are pasted directly into the
+`promote-to-non-issue` skill in Claude Code, which appends them
+to `_known-non-issues.md` with NI-NNN IDs and citations back to
+the originating audit. After promotion, the brief is redundant —
+the registry holds the same content with stable IDs and proper
+citations. Wont-fix briefs therefore live only in the triage
+conversation and the resulting registry entries; they do not
+land in the repo.
 
-Wont-fix entries are temporary acceptances, not permanent design.
-When an entry stops being temporary:
+The fix-brief is the durable record of what was triaged as
+wont-fix in a given audit cycle: each fix-brief includes a
+"Wont-fix items (promoted to NI-NNN through NI-MMM)" section
+listing the audit IDs that were accepted, with pointers to the
+resulting registry entries. Anyone reading the audit + fix-brief
+together gets the full triage outcome without consulting the
+transient wont-fix brief.
 
-- **Promote to `SPEC.md`** when it represents a permanent product
-  or architecture stance (e.g., "no automatic worker retry — manual
-  reset only"). Update the spec, change the entry's Status to
-  `Promoted (see SPEC.md#section)`, keep the entry.
-- **Promote to `docs/adr/NNNN-<slug>.md`** when it's an explicit
-  architectural decision with tradeoffs worth preserving. Once the
-  ADR is accepted, change Status to `Promoted (see ADR-NNNN)`,
-  keep the entry.
-- **Withdraw** if circumstances changed and the item should be
-  fixed after all. Change Status to `Withdrawn`. The next audit
-  will re-raise it as a fresh finding.
+## Lifecycle
 
-Never delete registry entries. The history is the value.
+```
+audit (CC session writes <date>-<slug>.md)
+  → triage (Claude project produces fix-brief + transient wont-fix list)
+  → promote wont-fixes (CC: wont-fix list → _known-non-issues.md)
+  → commit fix-brief alongside source audit
+  → fix (CC session uses fix-brief)
+  → optional re-audit (CC writes <date>-<original-slug>-fix-reaudit.md)
+```
 
-## Project knowledge ingestion
+Re-audit naming: for verification of a fix-brief application,
+use `<reaudit-date>-<original-slug>-fix-reaudit.md`. For full
+re-runs of an earlier audit (different scope, same slice), use a
+fresh `<date>-<slug>.md` with a different slug.
 
-For Claude Projects (browser-side analysis), ingest:
+## Related docs
 
-- The most recent audit file
-- `_known-non-issues.md` (always)
-- This README (one-time)
-
-Do NOT ingest the full audit history. Older audits stay in git for
-reference but pollute the active KB context.
-
-## Related
-
-- `CLAUDE.md` — rules audits check compliance against
-- `SPEC.md` — spec audits check compliance against
-- `docs/adr/` — when added, the ADR log
+- `docs/workflows/build-cycle.md` — broad workflow that this
+  directory's conventions implement
+- `SPEC.md` — the spec audits check compliance against
+- `CLAUDE.md` — the rules audits check compliance against
+- `docs/adr/` — architecture decision records (locked decisions
+  that audits also check against)
