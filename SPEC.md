@@ -73,17 +73,17 @@ Source of truth: Dashlane vault. No secrets in any repo.
 
 Per-surface secret list:
 
-| Secret                          | Cloudflare Pages | Render Worker | Render Cron | Supabase Edge Function |
-| ------------------------------- | ---------------- | ------------- | ----------- | ---------------------- |
-| `SUPABASE_URL`                  | —                | yes           | yes         | yes (built-in)         |
-| `NEXT_PUBLIC_SUPABASE_URL`      | yes              | —             | —           | —                      |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes              | —             | —           | —                      |
-| `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         | yes (built-in)         |
-| `YOUTUBE_API_KEY`               | —                | —             | yes         | —                      |
-| `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes (`asr-webhook`)    |
-| `ANTHROPIC_API_KEY`             | —                | yes (Slice 3) | —           | —                      |
-| `OPENAI_API_KEY`                | —                | yes (Slice 6) | —           | yes (`search`, Slice 6)|
-| `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes (`asr-webhook`)    |
+| Secret                          | Cloudflare Pages | Render Worker | Render Cron | Supabase Edge Function  |
+| ------------------------------- | ---------------- | ------------- | ----------- | ----------------------- |
+| `SUPABASE_URL`                  | —                | yes           | yes         | yes (built-in)          |
+| `NEXT_PUBLIC_SUPABASE_URL`      | yes              | —             | —           | —                       |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes              | —             | —           | —                       |
+| `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         | yes (built-in)          |
+| `YOUTUBE_API_KEY`               | —                | —             | yes         | —                       |
+| `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes (`asr-webhook`)     |
+| `ANTHROPIC_API_KEY`             | —                | yes (Slice 3) | —           | —                       |
+| `OPENAI_API_KEY`                | —                | yes (Slice 6) | —           | yes (`search`, Slice 6) |
+| `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes (`asr-webhook`)     |
 
 `ASR_WEBHOOK_SECRET` is set on the Render worker (which injects it as the `webhook_auth_header_value` in AssemblyAI submit calls) and on the Supabase Edge Function (which verifies the inbound `X-DulyNoted-Webhook` header against it). Cloudflare Pages does not touch the webhook flow.
 
