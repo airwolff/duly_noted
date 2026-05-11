@@ -32,6 +32,11 @@ function logOutcome(outcome: RunOutcome): void {
         `worker tick ${new Date().toISOString()} summarized meeting=${outcome.meetingId}`,
       );
       return;
+    case 'embedded':
+      console.log(
+        `worker tick ${new Date().toISOString()} embedded meeting=${outcome.meetingId} segments=${outcome.segmentCount}`,
+      );
+      return;
     case 'failed':
       console.error(
         `worker tick ${new Date().toISOString()} failed meeting=${outcome.meetingId} message=${outcome.message}`,
