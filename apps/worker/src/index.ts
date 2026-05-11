@@ -1,5 +1,6 @@
 import { createServiceClient } from '@duly-noted/db';
 import { loadEnv } from './env.js';
+import { createOpenAIEmbedder } from './embedding/openai.js';
 import { createAnthropicCaller } from './pipeline/anthropic.js';
 import { startPollLoop } from './poll-loop.js';
 
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
   console.log('db reachable');
 
   const callStructured = createAnthropicCaller(env.ANTHROPIC_API_KEY);
+  const embed = createOpenAIEmbedder(env.OPENAI_API_KEY);
 
   const handle = startPollLoop({
     supabase,
@@ -27,6 +29,7 @@ async function main(): Promise<void> {
     asrVendorApiKey: env.ASR_VENDOR_API_KEY,
     asrWebhookSecret: env.ASR_WEBHOOK_SECRET,
     callStructured,
+    embed,
   });
 
   const shutdown = (signal: NodeJS.Signals): void => {
