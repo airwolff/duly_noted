@@ -14,7 +14,7 @@ const MARKER_LABEL: Record<Segment['marker_type'], string> = {
 
 export function SegmentCard({ segment, youtubeId }: { segment: Segment; youtubeId: string }) {
   return (
-    <article className="rounded border border-slate-200 p-4">
+    <article id={`segment-${segment.id}`} className="rounded border border-slate-200 p-4">
       <div className="flex items-center gap-2">
         <span className="rounded bg-slate-100 px-2 py-0.5 text-xs uppercase tracking-wide text-slate-700">
           {MARKER_LABEL[segment.marker_type]}
