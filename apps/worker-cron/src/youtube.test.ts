@@ -53,10 +53,18 @@ describe('fetchUploadsPlaylistItems', () => {
         JSON.stringify({
           items: [
             {
-              snippet: { resourceId: { videoId: 'abc' }, title: 'Select Board 2026-04-15' },
+              snippet: {
+                resourceId: { videoId: 'abc' },
+                title: 'Select Board 2026-04-15',
+                publishedAt: '2026-04-15T20:00:00Z',
+              },
             },
             {
-              snippet: { resourceId: { videoId: 'def' }, title: 'Town Meeting' },
+              snippet: {
+                resourceId: { videoId: 'def' },
+                title: 'Town Meeting',
+                publishedAt: '2026-04-10T18:00:00Z',
+              },
             },
           ],
         }),
@@ -67,11 +75,12 @@ describe('fetchUploadsPlaylistItems', () => {
     const items = await fetchUploadsPlaylistItems({
       apiKey: 'KEY',
       uploadsPlaylistId: 'UU1QHI-zQvIIkptXJsupfTZg',
+      cutoffAt: new Date('2026-01-01T00:00:00Z'),
     });
 
     expect(items).toEqual([
-      { videoId: 'abc', title: 'Select Board 2026-04-15' },
-      { videoId: 'def', title: 'Town Meeting' },
+      { videoId: 'abc', title: 'Select Board 2026-04-15', publishedAt: '2026-04-15T20:00:00Z' },
+      { videoId: 'def', title: 'Town Meeting', publishedAt: '2026-04-10T18:00:00Z' },
     ]);
     const [url] = fetchSpy.mock.calls[0]!;
     const requestUrl = url instanceof URL ? url : new URL(String(url));
@@ -82,6 +91,142 @@ describe('fetchUploadsPlaylistItems', () => {
     expect(requestUrl.searchParams.get('maxResults')).toBe('10');
     expect(requestUrl.searchParams.get('playlistId')).toBe('UU1QHI-zQvIIkptXJsupfTZg');
     expect(requestUrl.searchParams.get('key')).toBe('KEY');
+    expect(requestUrl.searchParams.get('pageToken')).toBeNull();
+  });
+
+  it('skips items published before the cutoff and short-circuits pagination on the first stale item', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              snippet: {
+                resourceId: { videoId: 'fresh' },
+                title: 'Fresh Meeting',
+                publishedAt: '2026-04-15T20:00:00Z',
+              },
+            },
+            {
+              snippet: {
+                resourceId: { videoId: 'stale' },
+                title: 'Pre-launch Meeting',
+                publishedAt: '2024-01-01T00:00:00Z',
+              },
+            },
+            {
+              snippet: {
+                resourceId: { videoId: 'also-stale' },
+                title: 'Even Older',
+                publishedAt: '2023-06-15T00:00:00Z',
+              },
+            },
+          ],
+          nextPageToken: 'NEXT',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const items = await fetchUploadsPlaylistItems({
+      apiKey: 'KEY',
+      uploadsPlaylistId: 'UU1QHI-zQvIIkptXJsupfTZg',
+      cutoffAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    expect(items.map((i) => i.videoId)).toEqual(['fresh']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('paginates with pageToken when the whole page is within the cutoff and nextPageToken is present', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                snippet: {
+                  resourceId: { videoId: 'a' },
+                  title: 'A',
+                  publishedAt: '2026-05-01T00:00:00Z',
+                },
+              },
+              {
+                snippet: {
+                  resourceId: { videoId: 'b' },
+                  title: 'B',
+                  publishedAt: '2026-04-25T00:00:00Z',
+                },
+              },
+            ],
+            nextPageToken: 'TOKEN2',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                snippet: {
+                  resourceId: { videoId: 'c' },
+                  title: 'C',
+                  publishedAt: '2026-04-20T00:00:00Z',
+                },
+              },
+              {
+                snippet: {
+                  resourceId: { videoId: 'stale' },
+                  title: 'Stale',
+                  publishedAt: '2024-12-01T00:00:00Z',
+                },
+              },
+            ],
+            nextPageToken: 'TOKEN3',
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      );
+
+    const items = await fetchUploadsPlaylistItems({
+      apiKey: 'KEY',
+      uploadsPlaylistId: 'UU1QHI-zQvIIkptXJsupfTZg',
+      cutoffAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    expect(items.map((i) => i.videoId)).toEqual(['a', 'b', 'c']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const [secondUrl] = fetchSpy.mock.calls[1]!;
+    const secondRequestUrl = secondUrl instanceof URL ? secondUrl : new URL(String(secondUrl));
+    expect(secondRequestUrl.searchParams.get('pageToken')).toBe('TOKEN2');
+  });
+
+  it('stops paginating when the last page has no nextPageToken even if all items are within cutoff', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          items: [
+            {
+              snippet: {
+                resourceId: { videoId: 'only' },
+                title: 'Only',
+                publishedAt: '2026-05-01T00:00:00Z',
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    );
+
+    const items = await fetchUploadsPlaylistItems({
+      apiKey: 'KEY',
+      uploadsPlaylistId: 'UU1QHI-zQvIIkptXJsupfTZg',
+      cutoffAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    expect(items.map((i) => i.videoId)).toEqual(['only']);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 

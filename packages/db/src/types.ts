@@ -95,6 +95,7 @@ export interface Database {
           title_pattern: string | null;
           min_duration_seconds: number;
           uploads_playlist_id: string | null;
+          ingest_since_days: number;
         };
         Insert: {
           id?: string;
@@ -105,6 +106,7 @@ export interface Database {
           youtube_channel_id?: string | null;
           title_pattern?: string | null;
           min_duration_seconds?: number;
+          ingest_since_days?: number;
         };
         Update: {
           id?: string;
@@ -115,6 +117,7 @@ export interface Database {
           youtube_channel_id?: string | null;
           title_pattern?: string | null;
           min_duration_seconds?: number;
+          ingest_since_days?: number;
         };
         Relationships: [];
       };

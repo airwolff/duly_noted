@@ -9,11 +9,13 @@ const playlistItemsResponseSchema = z
             .object({
               resourceId: z.object({ videoId: z.string() }).passthrough(),
               title: z.string(),
+              publishedAt: z.string(),
             })
             .passthrough(),
         })
         .passthrough(),
     ),
+    nextPageToken: z.string().optional(),
   })
   .passthrough();
 
@@ -43,6 +45,7 @@ const videosResponseSchema = z
 export interface PlaylistItem {
   videoId: string;
   title: string;
+  publishedAt: string;
 }
 
 export interface VideoDetail {
@@ -73,31 +76,58 @@ export function parseIsoDuration(iso: string): number {
 export interface FetchPlaylistArgs {
   apiKey: string;
   uploadsPlaylistId: string;
+  // Items with snippet.publishedAt before this cutoff are skipped and end
+  // pagination for the board. YouTube returns playlistItems most-recent-first,
+  // so the first stale item guarantees every later item is also stale.
+  cutoffAt: Date;
 }
 
 /**
- * One quota unit. Returns the most recent up-to-10 uploads for the channel.
- * Uses the uploads playlist convention (UC… → UU…) so no `channels.list`
- * call is required at scan time. `search.list` is forbidden (100 units).
+ * One quota unit per page. Pages through the uploads playlist most-recent-first
+ * and short-circuits on the first item older than `cutoffAt`. Uses the uploads
+ * playlist convention (UC… → UU…) so no `channels.list` call is required.
+ * `search.list` is forbidden (100 units).
  */
 export async function fetchUploadsPlaylistItems(args: FetchPlaylistArgs): Promise<PlaylistItem[]> {
-  const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
-  url.searchParams.set('part', 'snippet');
-  url.searchParams.set('maxResults', '10');
-  url.searchParams.set('playlistId', args.uploadsPlaylistId);
-  url.searchParams.set('key', args.apiKey);
+  const collected: PlaylistItem[] = [];
+  let pageToken: string | undefined;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    const text = await response.text().catch(() => '');
-    throw new Error(`youtube playlistItems.list failed: ${response.status} ${text}`);
+  while (true) {
+    const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+    url.searchParams.set('part', 'snippet');
+    url.searchParams.set('maxResults', '10');
+    url.searchParams.set('playlistId', args.uploadsPlaylistId);
+    url.searchParams.set('key', args.apiKey);
+    if (pageToken) {
+      url.searchParams.set('pageToken', pageToken);
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new Error(`youtube playlistItems.list failed: ${response.status} ${text}`);
+    }
+    const json: unknown = await response.json();
+    const parsed = playlistItemsResponseSchema.parse(json);
+
+    let hitCutoff = false;
+    for (const item of parsed.items) {
+      if (new Date(item.snippet.publishedAt) < args.cutoffAt) {
+        hitCutoff = true;
+        break;
+      }
+      collected.push({
+        videoId: item.snippet.resourceId.videoId,
+        title: item.snippet.title,
+        publishedAt: item.snippet.publishedAt,
+      });
+    }
+
+    if (hitCutoff || !parsed.nextPageToken) {
+      return collected;
+    }
+    pageToken = parsed.nextPageToken;
   }
-  const json: unknown = await response.json();
-  const parsed = playlistItemsResponseSchema.parse(json);
-  return parsed.items.map((item) => ({
-    videoId: item.snippet.resourceId.videoId,
-    title: item.snippet.title,
-  }));
 }
 
 export interface FetchVideoDetailsArgs {

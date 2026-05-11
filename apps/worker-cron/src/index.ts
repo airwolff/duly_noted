@@ -11,7 +11,7 @@ async function main(): Promise<void> {
 
   const { data: boards, error } = await supabase
     .from('boards')
-    .select('id, youtube_channel_id, uploads_playlist_id')
+    .select('id, youtube_channel_id, uploads_playlist_id, ingest_since_days')
     .not('youtube_channel_id', 'is', null);
   if (error) {
     console.error(`cron tick ${new Date().toISOString()} boards query failed: ${error.message}`);
@@ -31,6 +31,7 @@ async function main(): Promise<void> {
           id: board.id,
           youtube_channel_id: board.youtube_channel_id,
           uploads_playlist_id: board.uploads_playlist_id,
+          ingest_since_days: board.ingest_since_days,
         },
       );
       if (outcome.skippedReason) {

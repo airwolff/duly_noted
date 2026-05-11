@@ -6,6 +6,7 @@ export interface DiscoverableBoard {
   id: string;
   youtube_channel_id: string | null;
   uploads_playlist_id: string | null;
+  ingest_since_days: number;
 }
 
 export interface DiscoverOutcome {
@@ -44,9 +45,11 @@ export async function discoverForBoard(
     return { boardId: board.id, inserted: 0, promoted: 0, skippedReason: 'no youtube_channel_id' };
   }
 
+  const cutoffAt = new Date(Date.now() - board.ingest_since_days * 24 * 60 * 60 * 1000);
   const items = await fetchUploadsPlaylistItems({
     apiKey: deps.apiKey,
     uploadsPlaylistId: board.uploads_playlist_id,
+    cutoffAt,
   });
 
   const fetchedIds = items.map((i) => i.videoId);
