@@ -51,10 +51,12 @@ Edge Functions in `supabase/functions/` run on Deno and have their own dependenc
 - Web: Next.js (App Router) on Cloudflare Pages via `@cloudflare/next-on-pages`.
 - Worker: plain Node/TS service on Render Background Worker (Starter, $7/mo). Custom Dockerfile because yt-dlp + ffmpeg are required.
 - Cron: plain Node/TS service on Render Cron Job. Same package layout as `apps/worker`, separate entrypoint, separate deploy.
-- DB / Auth / Storage: Supabase Pro. Postgres with RLS on every exposed table.
+- DB / Auth / Storage: Supabase Pro. Postgres with RLS on every exposed table. pgvector for the search semantic arm (Slice 6).
 - Auth: Supabase magic link. No passwords, no OAuth at v1. Session middleware in `apps/web` validates the Supabase session cookie on every request.
 - ASR vendor: AssemblyAI. Async + webhook callback to a Supabase Edge Function.
-- Validation: Zod at every API boundary and every external input (YouTube responses, ASR webhook payloads, LLM outputs). `.env` is also validated via Zod at boot.
+- LLM vendor: Anthropic Claude (Opus 4.7 for segmentation and summarization). Called from `apps/worker`.
+- Embedding vendor: OpenAI `text-embedding-3-small` (1536 dims, native). Called from `apps/worker` for index time and from `supabase/functions/search` for query time.
+- Validation: Zod at every API boundary and every external input (YouTube responses, ASR webhook payloads, LLM outputs, embedding-API responses). `.env` is also validated via Zod at boot.
 - HTTP client: native `fetch`. No axios.
 - Testing: Vitest. Use `vitest run` for CI, `vitest` for watch. Playwright deferred to post-MVP.
 - Lint: ESLint + `@typescript-eslint`. Format: Prettier. Both run via pnpm scripts at the repo root.
@@ -77,6 +79,7 @@ pnpm -r test                       # run all tests
 pnpm -r typecheck                  # tsc --noEmit across workspaces
 pnpm -r lint                       # ESLint
 pnpm format                        # Prettier write
+pnpm format:check                  # Prettier check (CI gate)
 pnpm -F web dev                    # local Next.js dev server
 pnpm -F worker dev                 # local worker (tsx watch)
 pnpm -F worker start               # production worker entrypoint
@@ -90,7 +93,7 @@ supabase secrets set KEY=value     # set a secret on the Supabase project for Ed
 docker build -f apps/worker/Dockerfile -t duly-noted-worker .  # build the worker container locally (run from repo root)
 ```
 
-Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
+Always run `pnpm -r typecheck && pnpm -r test && pnpm -r lint && pnpm format:check` before declaring a task done.
 
 ---
 
@@ -126,15 +129,19 @@ Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
 
 - `SUPABASE_SERVICE_ROLE_KEY` lives only on `apps/worker`, `apps/worker-cron`, and Supabase Edge Functions in `supabase/functions/`. Never import it from `apps/web`. Never embed it in a client bundle. The web app uses `NEXT_PUBLIC_SUPABASE_ANON_KEY` and relies on RLS.
 - `ASR_VENDOR_API_KEY` lives only on `apps/worker` and the `supabase/functions/asr-webhook` Edge Function. The Edge Function fetches the completed transcript from AssemblyAI; no other surface holds the vendor key.
+- `OPENAI_API_KEY` lives only on `apps/worker` and the `supabase/functions/search` Edge Function. The worker holds it for index-time embedding generation (Slice 6 pipeline). The Edge Function holds it for query-time embedding generation. The web app does not hold it. Cloudflare Pages env does not include it. `apps/worker-cron` does not hold it.
+- `ANTHROPIC_API_KEY` lives only on `apps/worker`. The web app and Edge Functions do not call Anthropic.
 - Vendor webhook receivers run as Supabase Edge Functions in `supabase/functions/`. `apps/web` does not host webhook receivers. Receivers verify the auth header against `ASR_WEBHOOK_SECRET` before any side effect (DB write, vendor fetch, Storage upload).
 - Webhook-receiving Edge Functions must disable JWT verification at the gateway. Any function under `supabase/functions/` that accepts third-party webhook callbacks must declare `verify_jwt = false` in a `[functions.<name>]` block in `supabase/config.toml`. Authentication is performed inside the function body using the configured webhook auth header (e.g. `X-DulyNoted-Webhook` for AssemblyAI). Without this declaration, Supabase's gateway rejects every callback with 401 before the function code runs — including the in-body auth check.
+- User-facing Edge Functions (called from `apps/web` on behalf of an authenticated user, e.g. `supabase/functions/search`) keep JWT verification ENABLED. The web layer forwards the user's JWT in the Authorization header; the Edge Function calls downstream RPCs with the same JWT so RLS gates results by the caller's identity.
 - Every new table must have RLS enabled in the same migration that creates it. A table without an RLS policy is a bug.
 - Every RLS policy must be paired with the corresponding table-level GRANT (`SELECT`/`INSERT`/`UPDATE`/`DELETE` for `anon`, `authenticated`, or `service_role` as appropriate) in the same migration. RLS without GRANT silently fails to expose the API path; both are required for Supabase.
 - Every direct table query from a service-role surface needs a `GRANT` on that table, regardless of whether the table also has RLS or RPC access paths. The rule above handles one direction (RLS → GRANT). The converse also holds: if `apps/worker*/src/**` or `supabase/functions/**/*.ts` contains `from('<table>')` against a table queried as `service_role`, that table needs `GRANT SELECT` (or the appropriate verb) to `service_role` in the migration history. RPC `SECURITY DEFINER` paths bypass role grants and can mask missing direct-table grants in local dev — only cloud `service_role` enforcement surfaces the gap.
+- RPCs called from authenticated user surfaces (web app or user-facing Edge Functions) must NOT use `SECURITY DEFINER`. They run as the caller so the membership-aware RLS policies on `publications`, `towns`, `boards`, `meetings`, `segments`, and `memberships` gate the result set. Worker-only RPCs (claim/complete/abandon trios) may use `SECURITY DEFINER` because the worker is service-role and the policy boundary is irrelevant; this is the only safe place for that escalation.
 - **DROP-side DDL uses `IF EXISTS`.** `drop policy`, `drop table`, and `drop index` statements include `if exists` to tolerate cloud drift from manual SQL Editor edits in the Supabase web UI. CREATE-side DDL remains bare per NI-003 (Supabase CLI applies migrations transactionally, so partial-apply recovery isn't a CREATE-side concern). The asymmetry is intentional: DROP-side `IF EXISTS` is one-way-ratchet defensive and never causes harm; CREATE-side `IF NOT EXISTS` would mask schema-state drift the CLI is supposed to surface.
 - Migrations must be backwards-compatible with the previously deployed worker. Additive changes (new column, new table, new index) deploy ahead of the code that uses them. Destructive changes (drop column, drop table, narrow constraint) follow expand/contract across multiple deploys: first deploy code that stops using the old structure, then deploy the migration that removes it. A migration that breaks the running worker on apply is a bug. The migrate workflow runs in parallel with Render's auto-deploy; backwards-compatibility is what makes that race safe.
 - `auth.uid()` and `auth.jwt()` claims are the only sources of authorization identity. Do not read user identity from `raw_user_meta_data` — it is user-editable.
-- ASR vendor calls and LLM calls run only from `apps/worker`, `apps/worker-cron`, or `supabase/functions/`. The web app does not hold vendor API keys. If a request from the web needs ASR or LLM work, it inserts a row that the worker picks up.
+- ASR vendor calls, LLM calls, and embedding-model calls run only from `apps/worker`, `apps/worker-cron`, or `supabase/functions/`. The web app does not hold third-party model vendor API keys. If a request from the web needs ASR or LLM work, it inserts a row that the worker picks up. If a request from the web needs an embedding (Slice 6 search), it goes through the `supabase/functions/search` Edge Function, which holds the embedding key and returns search results — not the embedding itself — to the web layer.
 - No background work in `apps/web`. Cloudflare Pages cannot run long-lived processes. Anything that takes more than the request lifecycle goes to the worker.
 - `apps/worker-cron` must use the `playlistItems.list` + `videos.list` pattern for video discovery; `search.list` (100 quota units/call) is forbidden. The uploads playlist ID is `UU` + the rest of the channel ID, computed at the column level — no `channels.list` call needed at scan time.
 - Cron scans honor the per-board `boards.ingest_since_days` horizon: any `playlistItems.list` result with `snippet.publishedAt < now() - boards.ingest_since_days` is skipped, and pagination short-circuits the moment a stale item appears (the playlist orders most-recent-first). Default horizon is 365 days; per-board override is data-only.
@@ -142,6 +149,7 @@ Always run `pnpm -r typecheck` and `pnpm -r test` before declaring a task done.
 - All worker queue reads use `SELECT ... FOR UPDATE SKIP LOCKED` followed by an atomic `UPDATE meetings SET status = ...` on the locked row. Read-then-write without the lock is a bug.
 - Do not commit `.env*` files except `.env.example`. Real secrets live in Cloudflare, Render, and Supabase dashboards.
 - LLM outputs are untrusted input. Validate with Zod before writing to the database. Never `JSON.parse` an LLM response into a typed value without validation. Anthropic structured outputs guarantee schema conformance via constrained decoding but do not guarantee factual accuracy or enforce length/range bounds — Zod still runs on every parsed object and is the only place schema-extra constraints (`minLength`, `maxLength`, `minimum`, `maximum`) are enforced.
+- Embedding-API responses are also untrusted input. Validate the response shape (array of arrays of numbers, expected length per vector) with Zod before persisting. Reject any embedding whose length does not match the configured dimensions for the model in use.
 - Cost discipline: this project runs on a tight budget. Before adding a service, dependency, or paid tier, confirm the cost impact against the figures in `SPEC.md`. If it changes the cost model, update `SPEC.md` in the same PR.
 
 ---
@@ -153,12 +161,14 @@ If a request asks for any of the following, stop and confirm before proceeding. 
 - Multi-LLM consensus verification or claim grounding beyond inline transcript excerpts with YouTube timestamp links.
 - Email digest, alerting, or any push-notification surface.
 - Public API or third-party integrations beyond YouTube ingest.
-- Video sources other than YouTube (Vimeo, Granicus, CivicPlus, direct MP4).
+- Video sources other than YouTube (Vimeo, Granicus, CivicPlus, Town Hall Streams, direct MP4).
 - Additional publications beyond the single tenant configured at launch. The schema is multi-tenant; the deployment is not.
-- Full-text or semantic search backends other than what `SPEC.md` specifies for v1.
+- Full-text or semantic search backends other than what `SPEC.md` specifies for v1 (Postgres FTS + pgvector + SQL RRF per ADR 0021).
+- Embedding models other than OpenAI `text-embedding-3-small` at v1 (ADR 0022). Switching to a different model is a SPEC + ADR change, not a code change.
 - AssemblyAI premium add-ons: `auto_chapters`, `sentiment_analysis`, `content_safety`, `iab_categories`, `entity_detection`, vendor-side `summarization`. Segmentation and summarization run on our own LLM pipeline.
 - Webhook receivers in `apps/web`. All vendor webhooks land at Supabase Edge Functions.
 - Automatic retry of `failed` meetings. Manual reset only.
+- Faceted filters on the search route, autocomplete, `ts_headline`-driven snippet highlighting, multi-page search pagination beyond a "show more" affordance. All deferred enhancements per ADR 0021's scope.
 
 Tenant-readiness in the schema does not mean tenant onboarding flows. Build the schema correctly; do not build admin tooling for a second tenant.
 

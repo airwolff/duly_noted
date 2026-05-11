@@ -5,9 +5,10 @@
 Four surfaces:
 
 - **Cloudflare Pages** — Next.js (App Router) web app at `dulynoted.report`. Stateless. Reader UI and admin UI. No webhook receivers, no long-running compute.
-- **Supabase Pro** — Postgres (data, RLS), Auth (magic link), Storage (audio + transcript artifacts), and Edge Functions (Deno runtime) for vendor webhook receivers.
+- **Supabase Pro** — Postgres (data, RLS, pgvector), Auth (magic link), Storage (audio + transcript artifacts), and Edge Functions (Deno runtime) for vendor webhook receivers and user-facing API endpoints (e.g. search).
 - **Render** — `apps/worker` Background Worker (Starter, $7/mo) running the ingestion and pipeline state machine; `apps/worker-cron` Cron Job ($1/mo) discovering new YouTube uploads hourly.
 - **AssemblyAI** — managed ASR vendor, Universal-3 Pro tier. Receives signed Supabase Storage URLs; calls back to a Supabase Edge Function on completion.
+- **OpenAI** — embedding-model vendor (`text-embedding-3-small`, 1536 dims). Called from `apps/worker` for index-time embedding generation; called from `supabase/functions/search` for query-time embedding generation. Not called from the web app.
 
 Postgres is the queue. The Render worker advances meeting state by polling rows on `meetings.status`; no Redis, SQS, or external queue at v1.
 
@@ -16,16 +17,20 @@ Postgres is the queue. The Render worker advances meeting state by polling rows 
 State machine on `meetings.status`:
 
 ```
-discovered → pending → extracting → transcribing → segmenting → summarizing → review → published
-                                                                              ↘  failed
+discovered → pending → extracting → transcribing → segmenting → summarizing → embedding → published
+                                                                                       ↘  failed
 ```
 
-- **Cron Job** writes new `discovered` rows from YouTube Data API responses, then auto-promotes to `pending` based on per-board title pattern + minimum duration.
+The `review` enum slot is reserved for the future operator review UI slice (Backlog B4) and slots between `embedding` and `published` in the enum ordering; no row sits in `review` at v1.
+
+- **Cron Job** writes new `discovered` rows from YouTube Data API responses, filtered by per-board `ingest_since_days` horizon (default 365), then auto-promotes to `pending` based on per-board title pattern + minimum duration.
 - **Worker** picks up `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `yt-dlp` to extract audio, uploads to Supabase Storage, submits a signed Storage URL to AssemblyAI, and parks the row at `transcribing`.
 - **Supabase Edge Function** (`asr-webhook`) receives the AssemblyAI callback, verifies the `X-DulyNoted-Webhook` auth header, fetches the full transcript JSON from AssemblyAI, writes the artifact to Storage, advances state to `segmenting`. The Edge Function is the only surface that holds both `ASR_VENDOR_API_KEY` and `SUPABASE_SERVICE_ROLE_KEY` simultaneously; this is the architecturally chosen surface for the receiver.
-- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, auto-advances `summarizing → published` directly. The `review` enum slot is reserved for the future operator review UI slice (see Backlog B4); no row sits in `review` at v1.
+- **Worker** picks up `segmenting` rows, runs the LLM segmentation pass, advances to `summarizing`. Picks up `summarizing` rows, runs the meeting-summary pass, advances to `embedding`. Picks up `embedding` rows, generates per-segment embeddings via OpenAI, advances to `published`.
 
-Failure semantics: any step that errors writes `status = 'failed'`, a `last_error` field, and `failed_at`; the worker re-polls `failed` rows only on manual reset (no automatic retry storms). Worker invocations are idempotent — picking up the same row twice never double-charges the ASR vendor or double-writes a segment.
+Failure semantics: any step that errors writes `status = 'failed'`, a `last_error` field, and `failed_at`; the worker re-polls `failed` rows only on manual reset (no automatic retry storms). Worker invocations are idempotent — picking up the same row twice never double-charges any vendor or double-writes a segment or embedding.
+
+Transient inflight states (`chaptering`, `summarizing_inflight`, `embedding_inflight`) provide the claim/complete semaphore for each LLM- or embedding-call stage. They are implementation detail; the diagram above shows only the public states.
 
 ## Repo structure
 
@@ -42,7 +47,7 @@ duly-noted/
 │   └── shared/         # Domain types, prompt templates, segmentation schemas
 ├── supabase/
 │   ├── migrations/     # SQL migrations
-│   ├── functions/      # Edge Functions (Deno) — vendor webhook receivers
+│   ├── functions/      # Edge Functions (Deno) — vendor webhook receivers, user-facing API
 │   ├── seed.sql        # Local + smoke-test seed data
 │   └── config.toml
 ├── .github/workflows/  # CI
@@ -63,6 +68,8 @@ Source of truth: Dashlane vault. No secrets in any repo.
 > consuming code. `ANTHROPIC_API_KEY` enters the worker's Zod env schema in
 > Slice 3 (segmentation pipeline; see Stage 4 below) and is reused in Slice 4
 > (summarization; see Stage 6 below) without further env changes.
+> `OPENAI_API_KEY` enters the worker's Zod env schema and the Edge Function's
+> env in Slice 6 (embedding pipeline + search query embedding; see Stage 9 below).
 
 Per-surface secret list:
 
@@ -73,11 +80,14 @@ Per-surface secret list:
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | yes              | —             | —           | —                      |
 | `SUPABASE_SERVICE_ROLE_KEY`     | —                | yes           | yes         | yes (built-in)         |
 | `YOUTUBE_API_KEY`               | —                | —             | yes         | —                      |
-| `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes                    |
+| `ASR_VENDOR_API_KEY`            | —                | yes           | —           | yes (`asr-webhook`)    |
 | `ANTHROPIC_API_KEY`             | —                | yes (Slice 3) | —           | —                      |
-| `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes                    |
+| `OPENAI_API_KEY`                | —                | yes (Slice 6) | —           | yes (`search`, Slice 6)|
+| `ASR_WEBHOOK_SECRET`            | —                | yes           | —           | yes (`asr-webhook`)    |
 
 `ASR_WEBHOOK_SECRET` is set on the Render worker (which injects it as the `webhook_auth_header_value` in AssemblyAI submit calls) and on the Supabase Edge Function (which verifies the inbound `X-DulyNoted-Webhook` header against it). Cloudflare Pages does not touch the webhook flow.
+
+`OPENAI_API_KEY` is set on the Render worker (which uses it for per-segment embedding generation during the `embedding` pipeline stage) and on the `search` Edge Function (which uses it for query-time embedding generation on behalf of authenticated users). Cloudflare Pages does not hold it; the web app calls the `search` Edge Function and never the OpenAI API directly.
 
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are exposed automatically inside Edge Functions via `Deno.env.get('SUPABASE_URL')` and `Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')`; no manual secret-set required for those two.
 
@@ -103,11 +113,11 @@ Every app validates its env at startup with Zod and fails loudly. `.env.example`
 | Domain (dulynoted.report)          | ~$1      | ~$12      |
 | **Total fixed**                    | **~$34** | **~$408** |
 
-Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
+Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6, 9.
 
 ## Changelog note for KB
 
-`kb_civic-sunlight-mvp-cost-model_2026-04-29_v1.xml` is built on a Vercel + Supabase Pro assumption. The Stage 1 decision moves hosting to Cloudflare Pages and adds a Render line. Net annual fixed cost moves from ~$540/yr to ~$408/yr. The model's CONFLICT-06 (Vercel ToS) and SS-03 are no longer load-bearing. CONFLICT-07 (Supabase Pro inactivity pause) still binds. The cost model file remains the authoritative reference for ASR and LLM lines, with the additional ASR-vendor binding established in Stage 2.
+`kb_civic-sunlight-mvp-cost-model_2026-04-29_v1.xml` is built on a Vercel + Supabase Pro assumption. The Stage 1 decision moves hosting to Cloudflare Pages and adds a Render line. Net annual fixed cost moves from ~$540/yr to ~$408/yr. The model's CONFLICT-06 (Vercel ToS) and SS-03 are no longer load-bearing. CONFLICT-07 (Supabase Pro inactivity pause) still binds. The cost model file remains the authoritative reference for ASR and LLM lines, with the additional ASR-vendor binding established in Stage 2 and the embedding-vendor binding established in Stage 9.
 
 **Locked decisions:** see ADR 0001 (Render Background Worker for the pipeline) and ADRs 0002–0007 for the remaining Stage 1 decisions.
 
@@ -116,8 +126,8 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6.
 - ~~Stage 2: ASR vendor selection~~ — closed in Stage 2 below.
 - ~~Stage 3: audio extraction path~~ — closed in Stage 3 below.
 - ~~Stage 4: segmentation methodology~~ — closed in Stage 4 below.
-- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed in Stage 6 below: v1 auto-advances `summarizing → published` directly. Operator review gate deferred (Backlog B4).
-- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3/4 deltas in Stage 5 below cover the ingest+segmentation+summarization-load-bearing subset; pass 2 still pending.
+- ~~Operator review step inclusion sets the `review` state semantics.~~ — closed: v1 auto-advances `summarizing → embedding → published` directly (Slice 6). Operator review gate deferred (Backlog B4).
+- Stage 5: full DDL for `meetings.status` enum, including index and constraint design (pass 2). Slice 2/3/4/6 deltas in Stage 5 below cover the ingest+segmentation+summarization+search-load-bearing subset; pass 2 still pending.
 
 ---
 
@@ -178,13 +188,14 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 
 - Compute uploads playlist ID by string substitution: `UC{rest}` → `UU{rest}`. Documented YouTube convention; no `channels.list` call needed at scan time.
 - `playlistItems.list?playlistId={uploadsId}&part=snippet&maxResults=10` — 1 unit
-- `videos.list?id={comma-separated-new-ids}&part=contentDetails,snippet` — 1 unit, batched up to 50 IDs
+- For each item in the response, parse `snippet.publishedAt` (RFC 3339 datetime) and compare against the per-board cutoff `now() - boards.ingest_since_days`. Items older than the cutoff are skipped. Because `playlistItems.list` orders the uploads playlist most-recent-first by YouTube convention, pagination short-circuits the moment a stale item appears — subsequent pages would be entirely stale and the `nextPageToken` is discarded for the remainder of this scan.
+- `videos.list?id={comma-separated-new-ids}&part=contentDetails,snippet` — 1 unit, batched up to 50 IDs (called only against items that passed the horizon filter)
 - Total: 2 quota units per board scan, regardless of how many videos are returned (within batch limits)
 - `search.list` is **forbidden** (100 units/call)
 
 Cron schedule: hourly (`0 * * * *`). Lincolnville Select Board meets monthly; hourly is overkill but predictable and cheap.
 
-**Auto-promotion `discovered → pending`.** Per-board rule: cron INSERTs new rows at `status = 'discovered'` with title and `duration_seconds`, then updates to `pending` where:
+**Auto-promotion `discovered → pending`.** Per-board rule: cron INSERTs new rows at `status = 'discovered'` (only for items inside the per-board `ingest_since_days` horizon) with title and `duration_seconds`, then updates to `pending` where:
 
 ```sql
 status = 'discovered'
@@ -196,8 +207,9 @@ For Lincolnville Select Board:
 
 - `title_pattern = 'select board'`
 - `min_duration_seconds = 600`
+- `ingest_since_days = 365` (default)
 
-Town Meeting and Planning Board content on the same channel are separate board entities with their own patterns when added.
+Town Meeting and Planning Board content on the same channel are separate board entities with their own patterns when added; each can carry its own `ingest_since_days` for cases like historical-reconstruction onboarding.
 
 **Failure modes.**
 
@@ -288,11 +300,11 @@ Heavier post-hoc verification (RAGAS Faithfulness, claim-to-segment alignment sc
 **State transition.** The worker uses two RPCs paralleling Slice 3's `claim_segmenting_meeting()` / `complete_segmentation()` pair, ensuring the CLAUDE.md §6 lock-then-atomic-update rule holds across the LLM call's duration without keeping a Postgres connection open for the full call:
 
 - `claim_summarizing_meeting()` — opens a transaction, executes `SELECT ... FOR UPDATE SKIP LOCKED` against rows at `status = 'summarizing'` (LIMIT 1), atomically updates the locked row to `status = 'summarizing_inflight'`, commits, returns the row. The transient `summarizing_inflight` state is the semaphore: once claimed, the row is invisible to other workers polling `summarizing`, so concurrent or restarted workers cannot redundantly call the LLM and double-bill Anthropic.
-- `complete_summarization(meeting_id uuid, summary text)` — atomically writes the summary, sets `summary_generated_at = now()`, advances status from `summarizing_inflight` to `published`, with `WHERE status = 'summarizing_inflight'` providing write-side idempotency under any duplicate-call edge case.
+- `complete_summarization(meeting_id uuid, summary text)` — atomically writes the summary, sets `summary_generated_at = now()`, advances status from `summarizing_inflight` to `embedding`, with `WHERE status = 'summarizing_inflight'` providing write-side idempotency under any duplicate-call edge case.
 
 Failure path mirrors Slice 3's: a separate UPDATE (or an `abandon_summarizing_meeting` RPC if Slice 3 has the parallel) sets `summarizing_inflight → failed` with `last_error` and `failed_at` populated.
 
-The single user-facing transition is `summarizing → published`. The `review` enum slot is reserved for the future operator review UI slice (Backlog B4); no row sits in `review` at v1. The `summarizing_inflight` state is a transient implementation detail not shown in the §"Background job architecture" diagram, paralleling Slice 3's transient `chaptering` state.
+The user-facing transition advanced by this stage is `summarizing → embedding` (handed off to Stage 9). The `summarizing_inflight` state is a transient implementation detail not shown in the §"Background job architecture" diagram, paralleling Slice 3's transient `chaptering` state.
 
 **Failure modes.**
 
@@ -323,7 +335,7 @@ The pre-slice scaffold ships the minimum-viable schema. Pass 2 (after Slice 2) r
 | `meetings`         | The pipeline state row                         | `id uuid pk`, `board_id uuid fk`, `status meeting_status` (default `'discovered'`), `youtube_id text`, `meeting_date date`, `last_error text`, `created_at`, `updated_at` |
 | `memberships`      | User ↔ publication join with role              | `user_id uuid → auth.users`, `publication_id uuid fk`, `role text check in ('reader','editor','admin')`, unique `(user_id, publication_id)`                               |
 
-**Enum.** `public.meeting_status` matches the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, summarizing, review, published, failed`.
+**Enum.** `public.meeting_status` matches the public-state portion of the state machine in §"Background job architecture": `discovered, pending, extracting, transcribing, segmenting, summarizing, embedding, review, published, failed`. Transient inflight states (`chaptering`, `summarizing_inflight`, `embedding_inflight`) are added in Slice 3, Slice 4, and Slice 6 schema deltas respectively; they are implementation detail and not shown in the documented diagram.
 
 **Identity.** No `public.users` table. `auth.users` is canonical; `memberships.user_id` joins against it directly. A `public.profiles` table can be added in pass 2 if profile fields land on the roadmap.
 
@@ -340,6 +352,7 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 - `youtube_channel_id text` (nullable; cron skips boards without one)
 - `title_pattern text` (nullable; Postgres `~*` regex; cron auto-promote rule)
 - `min_duration_seconds int default 0` (cron auto-promote rule)
+- `ingest_since_days int not null default 365` (cron horizon; cron skips `playlistItems.list` entries with `snippet.publishedAt` older than `now() - ingest_since_days`. Per-board so historical-reconstruction boards can override without affecting steady-state.)
 - `uploads_playlist_id text generated always as ('UU' || substr(youtube_channel_id, 3)) stored` (computed; eliminates a `channels.list` call per scan). Paired with `CHECK (youtube_channel_id IS NULL OR youtube_channel_id LIKE 'UC%')` so the substr() expression always operates on a valid channel id. (`replace(youtube_channel_id, 'UC', 'UU')` was the original draft; replaced because `replace()` is global and would corrupt the playlist id if `UC` ever appeared mid-string.)
 
 **Meetings table additions:**
@@ -454,9 +467,9 @@ create table public.segments (
   > meetings → boards → towns → memberships. See ## Slice 5 schema deltas
   > below.
 
-**Storage bucket.** No new bucket. Segments live entirely in Postgres; no Storage artifact for segments at v1. (Search slice will add pgvector + tsvector columns in pass 2.)
+**Storage bucket.** No new bucket. Segments live entirely in Postgres; no Storage artifact for segments at v1. Search columns on `segments` ship in Slice 6 (see ## Slice 6 schema deltas below).
 
-Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments`.
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns.
 
 ## Slice 4 schema deltas
 
@@ -472,7 +485,7 @@ Transient state for the worker's claim/complete pattern (see Stage 6 §State tra
 
 **Meetings table additions:**
 
-- `summary text` (nullable; populated when summarization succeeds and the row advances to `published`)
+- `summary text` (nullable; populated when summarization succeeds and the row advances out of `summarizing_inflight`)
 - `summary_generated_at timestamptz` (nullable; populated in the same `UPDATE` that writes `summary`)
 
 Both columns are nullable indefinitely — historical rows that pre-date Slice 4 (none exist in production at the time of this slice, but the constraint matters for replay) carry NULL values until re-run, and rows that fail the summarization step never receive values. NOT NULL is deferred until and unless backfill completes; no Backlog entry needed because the nullable shape is correct as-is.
@@ -480,10 +493,10 @@ Both columns are nullable indefinitely — historical rows that pre-date Slice 4
 **Stored procedures (RPCs).** Mirror Slice 3's claim/complete pair:
 
 - `claim_summarizing_meeting()` — opens a transaction, `SELECT ... FOR UPDATE SKIP LOCKED` on a row at `status = 'summarizing'` (LIMIT 1), atomic UPDATE to `status = 'summarizing_inflight'`, commit, return the row. Match Slice 3's `claim_segmenting_meeting()` shape and naming convention exactly.
-- `complete_summarization(meeting_id uuid, summary text)` — atomically writes `summary`, `summary_generated_at = now()`, advances status from `summarizing_inflight` to `published`, with `WHERE status = 'summarizing_inflight'` for write-side idempotency. Match Slice 3's `complete_segmentation()` shape.
+- `complete_summarization(meeting_id uuid, summary text)` — atomically writes `summary`, `summary_generated_at = now()`, advances status from `summarizing_inflight` to `embedding`, with `WHERE status = 'summarizing_inflight'` for write-side idempotency. Match Slice 3's `complete_segmentation()` shape. The advance target is `embedding` (Slice 6's new state) rather than `published`; this is the Slice 6 amendment to Slice 4's RPC contract.
 - Failure path follows whatever pattern Slice 3 uses for failed segmentation (separate `abandon_*` RPC or inline UPDATE) — match exactly; do not introduce a new failure-path style for this stage.
 
-**Indexes.** None added. The summary column is reader-UI-rendered, not queried. No `WHERE summary IS NOT NULL` filter is needed at the database layer (the existing `WHERE status = 'published'` policy already filters to rows that successfully completed summarization).
+**Indexes.** None added. The summary column is reader-UI-rendered, not queried. No `WHERE summary IS NOT NULL` filter is needed at the database layer (the existing `WHERE status = 'published'` policy already filters to rows that successfully completed summarization, embedding, and any future post-summary stages).
 
 **Trigger.** `set_updated_at()` already applies to `meetings` from Slice 2; the new columns are covered.
 
@@ -491,7 +504,7 @@ Both columns are nullable indefinitely — historical rows that pre-date Slice 4
 
 **Storage bucket.** No new bucket. Summary lives entirely in Postgres.
 
-Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships).
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id`, soft-delete columns, search columns on `segments` (shipped in Slice 6; see ## Slice 6 schema deltas below).
 
 ## Slice 5 schema deltas
 
@@ -515,7 +528,56 @@ Each policy is paired with `GRANT SELECT ON public.{table} TO authenticated`.
 
 **Performance note.** The nested-subquery policy shape relies on FK-side indexes on `memberships.publication_id`, `towns.publication_id`, `boards.town_id`, `meetings.board_id`. The first three remain in the pass-2 deferred list (FK-side indexes were always part of pass 2); `meetings.board_id` is already indexed (Slice 2 `meetings_board_id_idx`). At v1 corpus scale (~24 meetings/year, single tenant) the unindexed JOIN cost is irrelevant. The pass-2 FK index work picks the rest up before tenant scale stresses the policy plan.
 
-Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id` and other un-indexed FK-side columns, soft-delete columns, search columns on both `meetings` and `segments` (search-on-summary lands when the search slice ships).
+Pass 2 still deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id` and other un-indexed FK-side columns, soft-delete columns. Search columns on `segments` are shipped in Slice 6 (see ## Slice 6 schema deltas below). Search columns on `meetings.summary` remain deferred; Slice 6 indexes segments only and the per-meeting summary is rendered at the top of the meeting page where any segment hit lands.
+
+## Slice 6 schema deltas
+
+Single migration file `NNNN_slice_6_search_schema.sql`, backwards-compatible with the previously deployed worker. Additive on `segments`; existing rows have `NULL` for the embedding column until backfilled. The lexical `search_tsv` column is generated stored, so existing rows populate automatically.
+
+**Enum additions:**
+
+```sql
+alter type public.meeting_status add value 'embedding' before 'review';
+alter type public.meeting_status add value 'embedding_inflight' before 'review';
+```
+
+`embedding` is the public-visible state advancing from `summarizing_inflight`; `embedding_inflight` is the transient claim/complete semaphore (paralleling `summarizing_inflight` and Slice 3's `chaptering`). Postgres 14+ permits `ALTER TYPE ADD VALUE` inside a transaction. The Slice 4 `complete_summarization` RPC's advance target updates from `published` to `embedding` as part of this slice (see Slice 4 schema deltas above for the amended RPC contract).
+
+**Segments table additions:**
+
+```sql
+alter table public.segments
+  add column embedding extensions.vector(1536),
+  add column search_tsv tsvector generated always as (
+    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(transcript_excerpt, '')), 'C')
+  ) stored;
+```
+
+Weights: A on `title`, B on `description`, C on `transcript_excerpt`. The semantic arm embeds the unweighted concatenation `title || ' ' || description || ' ' || transcript_excerpt`; weights are a lexical-arm-only concept.
+
+**Indexes:**
+
+- `segments_embedding_hnsw_idx` — `using hnsw (embedding vector_cosine_ops)` for the semantic arm. Cosine distance (`<=>`) is the query operator; OpenAI `text-embedding-3-small` returns L2-normalized vectors so inner product would produce identical ranking, but the cosine operator matches the broader pgvector convention.
+- `segments_search_tsv_gin_idx` — `using gin (search_tsv)` for the lexical arm.
+
+**Stored procedures (RPCs).** Mirror Slice 4's claim/complete pair plus a separate failure-path RPC matching whatever Slice 3 settled on:
+
+- `claim_embedding_meeting()` — opens a transaction, `SELECT ... FOR UPDATE SKIP LOCKED` on a row at `status = 'embedding'` (LIMIT 1), atomic UPDATE to `status = 'embedding_inflight'`, commit, return the row plus its segments. Match Slice 4's `claim_summarizing_meeting()` shape; the segments JOIN is the only addition.
+- `complete_embedding(meeting_id uuid, segment_embeddings jsonb)` — atomically writes per-segment embeddings, advances status from `embedding_inflight` to `published`, with `WHERE status = 'embedding_inflight'` for write-side idempotency. The `segment_embeddings` argument is shaped as `[{"segment_id": "...", "embedding": [...]}, ...]`; the RPC iterates and writes per segment in a single transaction so partial writes are impossible.
+- `abandon_embedding_meeting(meeting_id uuid, error_text text)` — UPDATE from `embedding_inflight` to `failed` with `last_error` and `failed_at` set. Match Slice 3's failure-path style exactly.
+- `search_segments(query_text text, query_embedding extensions.vector(1536), match_count int, full_text_weight float default 1.0, semantic_weight float default 1.0, rrf_k int default 50)` — returns the top `match_count` segments by Reciprocal Rank Fusion, joined to parent meetings/boards/towns/publications for display context. The RPC runs with the caller's role (no `SECURITY DEFINER`); membership-aware RLS policies on segments and joined parents gate the result set. Implementation follows the Supabase hybrid-search reference pattern with RRF formula `weight_i / (rrf_k + rank_i)` per arm, summed, ordered descending.
+
+**Trigger.** `set_updated_at()` already applies to `segments` from Slice 3; the new columns are covered.
+
+**RLS.** No new policy at Slice 6. The existing membership-aware `authenticated` SELECT policy on `segments` (Slice 5) covers the new columns. The `search_segments` RPC inherits the same boundary because it runs as the calling role.
+
+**GRANTs.** Worker reads/writes `segments.embedding` via `service_role`, already covered by Slice 3's `GRANT ALL ON segments TO service_role`. The new RPCs require `GRANT EXECUTE` to `service_role` (for the claim/complete/abandon trio) and `authenticated` (for `search_segments`).
+
+**Storage bucket.** No new bucket.
+
+**Pass 2 status.** Remaining deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id` and other un-indexed FK-side columns, soft-delete columns, search column on `meetings.summary` (intentionally deferred — see Stage 9).
 
 ---
 
@@ -525,7 +587,7 @@ Magic-link only. No passwords, no OAuth at v1.
 
 **Supabase Auth → URL Configuration.**
 
-- **Site URL.** `https://duly-noted.pages.dev` (production Cloudflare Pages domain). Will move to `https://dulynoted.report` once the apex domain is wired in.
+- **Site URL.** `https://duly-noted.pages.dev` (production Cloudflare Pages domain). Will move to `https://dulynoted.report` once the apex domain is wired in. Until DNS resolves for the apex domain, the Site URL must remain on `pages.dev` — premature switching breaks magic-link delivery (the link emails out with an unresolvable hostname).
 - **Redirect URLs (allowlist).**
   - `https://duly-noted.pages.dev/auth/callback` — production
   - `https://*.duly-noted.pages.dev/auth/callback` — Cloudflare Pages preview deploys
@@ -540,7 +602,7 @@ Magic-link only. No passwords, no OAuth at v1.
 | `NEXT_PUBLIC_SUPABASE_URL`      | Project URL (publishable)                  |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon publishable key. RLS enforces access. |
 
-The service-role key, the ASR vendor key, and the webhook secret never reach Cloudflare. Webhook receivers run on Supabase Edge Functions (Stage 2), not on the web app.
+The service-role key, the ASR vendor key, the embedding vendor key (`OPENAI_API_KEY`), and the webhook secret never reach Cloudflare. Webhook receivers run on Supabase Edge Functions (Stage 2); the search query-embedding surface runs on Supabase Edge Functions (Stage 9). Cloudflare Pages env is publishable-keys-only.
 
 **Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
 
@@ -562,6 +624,7 @@ The service-role key, the ASR vendor key, and the webhook secret never reach Clo
 /{publication.slug}/{town.slug}                                     board list
 /{publication.slug}/{town.slug}/{board.slug}                        meeting list (published only)
 /{publication.slug}/{town.slug}/{board.slug}/{meeting.id}           meeting page (hybrid layout)
+/{publication.slug}/search?q=...                                    search (Stage 9, Slice 6)
 ```
 
 Meeting URLs use `meeting.id` (uuid) rather than a slug. `meetings` carries no human-readable unique slug today and `meeting_date` is not unique within a board across schedule edits or special meetings; uuid is the only stable key. A future slice can introduce a date-plus-discriminator slug without breaking the existing uuid URLs (additive route).
@@ -588,7 +651,7 @@ The hybrid layout matches the locked product decision: summary at top, chaptered
 
 **Bootstrap and edge cases.**
 
-- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; admin-side seeding (manual SQL at v1, future admin UI as part of B4) is the sole bootstrap path.
+- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; admin-side seeding (manual SQL at v1, future admin UI as part of B4; semi-automated CSV-to-SQL seed script as Backlog B8) is the sole bootstrap path.
 - Direct URL access to a `meetings.id` at `status != 'published'`: 404. RLS hides the row from the SSR client; the page renders the standard not-found surface.
 - Direct URL with a publication/town/board slug the user has no membership for: 404 on the same RLS path.
 
@@ -603,7 +666,73 @@ The hybrid layout matches the locked product decision: summary at top, chaptered
 
 **Cost expectation at v1 scale.** Cloudflare Pages free tier covers the reader. Supabase reads are RLS-filtered SELECTs against indexed columns; no new vendor cost. Magic-link emails on the built-in tier are free within the rate cap; custom SMTP via Resend is ~$0/month at the small allowlist size (Resend's free tier is 100 emails/day, well above v1 need).
 
-**Locked decisions.** ADR 0020 — "Reader UI v1 ships without search."
+**Locked decisions.** ADR 0020 — "Reader UI v1 ships without search." Status moves to "Superseded by Slice 6" when Slice 6 ships (the search slice referenced by ADR 0020's revisit trigger). Until that transition, ADR 0020 governs the reader-without-search shape.
+
+---
+
+# Stage 9 — Search (as scoped)
+
+**Method.** Hybrid keyword + semantic search across `segments` of published meetings, scoped to the user's publication via existing RLS. Lexical arm uses Postgres native FTS (`tsvector` GIN, `ts_rank_cd` cover-density ranking). Semantic arm uses pgvector with OpenAI `text-embedding-3-small` (1536 dims, native). Both arms are fused in SQL via Reciprocal Rank Fusion inside the `search_segments` RPC.
+
+The pattern follows Supabase's published hybrid-search reference (`supabase.com/docs/guides/ai/hybrid-search`) with two material adjustments: native 1536 dimensions (rather than the Matryoshka-truncated 512 used in Supabase's example) and weighted `tsvector` segments (A/B/C across title/description/transcript_excerpt) rather than a single unweighted content field.
+
+**URL structure.** Single new authenticated route, publication-scoped per Stage 8 convention:
+
+```
+/{publication.slug}/search                                          search input + results
+/{publication.slug}/search?q=<query>                                rendered results
+```
+
+The page is a server component that reads `searchParams.q`, calls the Edge Function with the query string, renders results. No client-side data fetching at v1.
+
+**Page composition.**
+
+- Search input at the top. Submit via form action (GET) so the query lives in the URL and back-navigation works.
+- Result cards, ranked by RRF score. Each card shows: town name / board name / `meeting_date` / meeting title / segment title / `marker_type` badge / a snippet from `transcript_excerpt` (no `ts_headline` highlighting at v1; the snippet is the leading characters truncated). Click target = existing meeting page with a segment-id anchor.
+- "Show more" link appears when result count is at the configured `match_count` boundary. No deeper pagination at v1.
+- Empty-state copy when the query returns no results.
+
+**Edge Function `search`.** Lives at `supabase/functions/search/`. Receives `POST { query: string, match_count?: number }`. Verifies the caller's JWT (not disabled — distinct from `asr-webhook` which is a vendor callback). Embeds the query via OpenAI `text-embedding-3-small`, then calls the `search_segments` RPC server-side with the user's JWT passed through (so RLS gates results), supplying both the query string for the lexical arm and the embedding for the semantic arm. Returns the result set. Single round trip from the browser.
+
+The Edge Function is the only surface that holds `OPENAI_API_KEY` at query time. The worker holds the same key at index time. The web app holds neither and depends on the Edge Function for query embedding.
+
+**Embedding pipeline (worker side).** New `apps/worker/src/embedding/` handler picks up `embedding` rows via `claim_embedding_meeting()`, generates one embedding per segment via OpenAI (model `text-embedding-3-small`, dimensions 1536 native), writes via `complete_embedding`, advances the row to `published`. Failure path uses `abandon_embedding_meeting` to set `failed` with `last_error`. Failure modes mirror Stage 6:
+
+- OpenAI API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s); honors `retry-after` headers when present. After exhaustion, the row fails.
+- Length-bound violation: `text-embedding-3-small` has an 8,192 token input cap. v1 segment lengths (title + description + transcript_excerpt) are well below this. The handler validates input length defensively before each API call as a guard.
+- Empty `segments` array at pickup: handler fails the row before any API call. Should not occur post-Slice-3.
+- Response-shape validation: each returned embedding is Zod-validated for length (must equal 1536) and element type (number) before persistence.
+
+**Backfill.** One-shot script `apps/worker/scripts/backfill-embeddings.ts`. Reads cloud Supabase service-role credentials from local env. Queries `meetings WHERE status = 'published'` joined to `segments WHERE embedding IS NULL`. For each meeting, generates per-segment embeddings and writes them via direct UPDATE (not via the RPC, which assumes the state-machine path). No status transition — backfill is for rows that already published before the new pipeline existed. Idempotent: re-running against a fully-backfilled corpus is a no-op.
+
+**Search query flow.**
+
+1. User navigates to `/{publication.slug}/search?q=...`.
+2. Server component constructs the Edge Function request with the user's JWT in the Authorization header (forwarded from the SSR session) and the query in the POST body.
+3. Edge Function verifies JWT, calls OpenAI embeddings, calls `search_segments` RPC server-side (passing the caller's JWT), returns results.
+4. Server component renders the results list.
+
+The `search_segments` RPC runs as the caller's role, so the membership-aware RLS policies on `segments` and joined parent tables (`meetings`, `boards`, `towns`, `publications`) gate the result set. A user without a membership row sees an empty result set.
+
+**Failure modes (UI surface).**
+
+- Edge Function 500 or timeout: page renders an error state with retry affordance.
+- Empty results: empty-state copy ("No segments matched. Try different keywords.").
+- User has no membership: results are RLS-filtered to empty; UI renders the same empty-state copy.
+
+**Out of scope at Slice 6.**
+
+- Faceted filters by `marker_type` (no chips). Defer until query-log data motivates the surface.
+- Autocomplete / typeahead.
+- `ts_headline`-driven snippet highlighting beyond basic substring rendering.
+- Embedded search bar in list pages — standalone route only.
+- Pagination beyond a single "show more" affordance at result count > `match_count`.
+- Indexing `meetings.summary` (segments only; summary lives at the top of the meeting page where any segment hit lands).
+- Cross-publication search (single-tenant lock).
+
+**Cost expectation at v1 scale.** Backfill: <$0.01 at current corpus (single-digit published meetings, low-hundreds of segments, ~500 tokens per segment input). Recurring: ~$0.01/week per board ongoing at steady-state ingest. Query-time embeddings: ~$0.000002 per query at typical query length (well below 100 tokens). At any realistic v1 query volume, OpenAI cost is dominated by indexing, and indexing is negligible.
+
+**Locked decisions.** ADR 0021 — Hybrid search via Postgres FTS + pgvector + SQL RRF. ADR 0022 — OpenAI text-embedding-3-small via Edge Function for query embedding. ADR 0020 — Reader UI v1 ships without search → status updates to `Superseded by Slice 6` when Slice 6 ships.
 
 ---
 
@@ -615,7 +744,7 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 - **What:** Replace or cross-check `meetings.duration_seconds` (set by cron from YouTube `videos.list contentDetails.duration`) with AssemblyAI's `audio_duration` field from `transcript.json`. AssemblyAI's value is authoritative for any chronology work that derives from the actual audio submitted to ASR.
 - **Why:** Discrepancies surfaced during Slice 3 verification on meeting `a669dadb-816f-44a2-8d6c-54a6e2197ca1` (segmented end-to-end at 2026-05-09T21:38:15Z). YouTube's `contentDetails.duration` reflects the published video; AssemblyAI's `audio_duration` reflects the audio actually transcribed. They can drift on edited or re-encoded uploads.
-- **Trigger:** Next worker handler that opens `transcript.json` for any reason. Slice 4 (summarization) runs segments-only and does not open the file, so B1 does not bundle into Slice 4. Likely natural triggers: B5 (transcript-aware summarization, if it ships) or any V2 grounding/verification work that needs raw transcript text.
+- **Trigger:** Next worker handler that opens `transcript.json` for any reason. Slice 4 (summarization) runs segments-only and does not open the file, so B1 does not bundle into Slice 4. Slice 6 (embedding) also operates segments-only and does not open the file. Likely natural triggers: B5 (transcript-aware summarization, if it ships) or any V2 grounding/verification work that needs raw transcript text.
 
 ## B2 — NOT NULL on `meetings.duration_seconds`
 
@@ -625,7 +754,7 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 ## B4 — Operator review gate at `review → published`
 
-- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → published` directly in Stage 6 with no human gate; no row sits in `review` at v1.
+- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → embedding → published` directly in Stages 6 and 9 with no human gate; no row sits in `review` at v1.
 - **Why:** Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
 - **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught, or (b) the slice that builds an admin/operator UI for any reason picks up the review surface alongside. Whichever fires first.
 
@@ -643,6 +772,12 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 ## B7 — Pre-launch test sweep
 
-- **What:** Dedicated slice reviewing test coverage across the deployed system before v1 launch. Targets: end-to-end pipeline integration test (ingest → ASR → segment → summarize → render), cross-publication RLS isolation (closes deferred coverage from Slice 5 Q1 — towns/boards/meetings/segments policies untested in `packages/db/src/rls.test.ts`), smoke-test pack against production after deploy, manual QA checklist for the reader surface (login flow, all four list pages, meeting page with segments, YouTube iframe error paths).
+- **What:** Dedicated slice reviewing test coverage across the deployed system before v1 launch. Targets: end-to-end pipeline integration test (ingest → ASR → segment → summarize → embed → render), cross-publication RLS isolation (closes deferred coverage from Slice 5 Q1 — towns/boards/meetings/segments policies untested in `packages/db/src/rls.test.ts`), smoke-test pack against production after deploy, manual QA checklist for the reader surface (login flow, all four list pages, meeting page with segments, YouTube iframe error paths, search route happy/sad paths).
 - **Why:** Per-slice audits enforce coverage ratio at the slice scope. Cross-cutting integration paths and deferred coverage decisions accumulate across slices and need a sweep before users see the product. The end-to-end integration test is the single artifact that catches "all the pieces line up" — no individual slice owns it.
 - **Trigger:** Slice 6 (search) ships and pre-launch readiness becomes the next planning concern; or any cross-slice regression surfaces in operational verification.
+
+## B8 — Config-seed script for tenant boards
+
+- **What:** A one-shot script (`apps/worker/scripts/seed-tenant-config.ts` or equivalent) that reads a CSV (publication / town / board / YouTube channel ID / title pattern / min duration / ingest_since_days / membership emails) and runs the corresponding INSERTs into `publications`, `towns`, `boards`, `memberships`. Idempotent (`ON CONFLICT ... DO NOTHING` or matching upsert per row). The KB inventories at `kb_knox-county-municipal-video`, `kb_waldo-county-municipal-video`, and the `kb_meeting-cadence-*` files are the source data for the CSV's initial population.
+- **Why:** v1 ships with one board (Lincolnville Select Board) configured via hand-written SQL — fine at single-board scale. As coverage expands toward full Midcoast Villager geography (Knox County 18 municipalities + Waldo County 26 municipalities + Hancock County + MDI = roughly 20–30 candidate boards with verified video presence per the KB inventories), hand-rolling INSERTs becomes the friction the build was meant to avoid. Per the local-govt-meeting-apis KB synthesis, no third-party API serves the target Maine geographies (GatherGov, Council Data Project, Legistar, and CivicBand all received FAILS-TO-SERVE verdicts) — the only feasible automation is a seed script reading the KB's already-completed research as a CSV.
+- **Trigger:** A second board or a second publication is provisioned. At that point the CSV-to-SQL workflow is more efficient than additional hand-INSERTs. Until then, hand-rolling matches the actual volume.
