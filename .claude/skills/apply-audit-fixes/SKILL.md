@@ -102,7 +102,7 @@ Fix queue from 2026-05-10-slice-5-reader-ui-fix-brief.md:
   [5] F11    (LOW)    — @testing-library/user-event unused
 
 Workflow/SPEC amendments from the brief:
-  [6] Root CLAUDE.md §5 PR gate — add pnpm -r format:check
+  [6] Root CLAUDE.md §5 PR gate — add pnpm format:check
   [7] SPEC.md §Backlog — add B-NN entry
   [8] build-cycle.md routing policy — manual paste (substantial)
 
@@ -154,7 +154,7 @@ Run, in order:
 
 - `pnpm -r typecheck`
 - `pnpm -r lint`
-- `pnpm -r format:check` (per root CLAUDE.md §5 PR gate)
+- `pnpm format:check` (per root CLAUDE.md §5 PR gate)
 - `pnpm -r test` if the changed area has tests
 
 If any step fails: stop, report the failure verbatim, ask for

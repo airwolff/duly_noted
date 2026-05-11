@@ -69,7 +69,7 @@ In order:
 Capture raw output:
 
 - `pnpm -r lint`, `pnpm -r typecheck`, `pnpm -r test`,
-  `pnpm -r format:check` (per root CLAUDE.md §5 PR gate)
+  `pnpm format:check` (per root CLAUDE.md §5 PR gate)
 - `git diff --stat <range>` and `git diff --shortstat <range>`
 - Grep sweeps in changed files: TODO/FIXME/XXX, `console.`
   (excluding `apps/worker*`), hardcoded URLs (excluding tests),

@@ -257,17 +257,21 @@ This Claude project cannot write to the repo. Two paths:
 
 **Manual paste** — copy updated content from this conversation,
 save to the appropriate file, commit. Use for substantial
-revisions where you want to read the diff yourself before
+revisions where reading the diff yourself matters before
 committing. Fix-briefs land via downloadable artifacts saved to
 `docs/audits/`.
 
 **Claude Code mediated** — ask Claude Code to apply specific
-edits ("update SPEC.md section X to read: …"). Faster for small
-targeted changes; riskier for large rewrites because the model
-might miss context.
+edits ("update SPEC.md section X to read: …"). Use for small
+targeted edits (single-line replacements, named-symbol
+substitutions, additive single paragraphs). CC's `str_replace`
+is more precise than human copy-paste at this scale; manual
+whitespace and adjacent-line errors are the dominant failure
+mode for one-line edits, regardless of file type.
 
-When in doubt, paste manually for SPEC.md and CLAUDE.md changes.
-Use Claude Code for code changes always.
+Default by edit size, not by file type. Small targeted → CC;
+substantial revision → manual paste. Always use Claude Code for
+code changes.
 
 ## Order of operations recap
 

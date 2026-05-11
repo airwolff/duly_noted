@@ -9,7 +9,7 @@ Next.js / Cloudflare Pages surface.
 - Server components by default. Add `"use client"` only when the
   component needs browser APIs, event handlers, or React state.
 - Data fetching happens in server components via the Supabase SSR helper
-  (`createServerComponentClient` from `@supabase/ssr`). The browser
+  (`createServerClient` from `@supabase/ssr`). The browser
   Supabase client is for client components that need to react to auth
   state changes — not for general data fetching.
 - The session cookie is the single source of authenticated identity at
@@ -76,4 +76,4 @@ Next.js / Cloudflare Pages surface.
 - Admin UI for membership management or operator review. Backlog B4
   and future slices.
 - Client-side state management libraries (Redux, Zustand). React state
-  + URL state are sufficient at the v1 page surface.
+  and URL state are sufficient at the v1 page surface.

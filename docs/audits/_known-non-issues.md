@@ -94,7 +94,7 @@ keep the entry — do not delete. The history is the value.
 - Revisit when: a second `boards` row is created (same or different publication). That condition forces the constraint reshape — `(board_id, youtube_id)` UNIQUE replaces the bare UNIQUE in the same migration that inserts the second board.
 
 ## NI-008: meetings RLS authenticated SELECT lacks per-publication tenant filter
-- Status: Accepted
+- Status: Promoted (see SPEC.md §Stage 5 schema deltas, §Stage 8)
 - Source: docs/audits/2026-05-07-slice-2-ingestion.md#question-4
 - Date accepted: 2026-05-08
 - Scope: supabase/migrations/slice_2_ingestion, meetings RLS policy for authenticated role
@@ -147,7 +147,7 @@ keep the entry — do not delete. The history is the value.
 - Date accepted: 2026-05-09
 - Scope: packages/shared/src/segmentation/index.ts
 - Reasoning: The exports `MARKER_TYPES`, `TITLE_MAX_LEN`, `DESCRIPTION_MAX_LEN`, `lookupTToken`, `TTokenInput`, `Step1Output`, `Step2Output`, `Step3Output` have zero internal consumers today. They document the package's intended public surface for imminent consumers: the reader UI (Slice 5+) needs `MARKER_TYPES` for filter chips and the length constants for client-side truncation; the Edge Function or summarization handler may need the t-token helpers. Barrel files do not ship dead code (tree-shaking handles that), and the package is not published. Trimming now means re-exporting later.
-- Revisit when: The imminent consumers (reader UI, Edge Function, summarization handler) ship and the actual consumed surface is known. At that point trim any export that remains genuinely unused.
+- Revisit when: When the search slice (Slice 6) ships and the actual consumed surface from `packages/shared/segmentation/index.ts` is known — audit consumed surface and trim what didn't materialize. Trigger updated 2026-05-10 per docs/audits/2026-05-10-slice-5-reader-ui.md reopen flag (predicted Slice-5 consumption did not fire).
 
 ## NI-015: chunkLines admits oversized single line when current is empty
 - Status: Accepted

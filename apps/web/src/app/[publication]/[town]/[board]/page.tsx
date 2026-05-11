@@ -16,12 +16,19 @@ export default async function BoardPage({
   const chain = await resolveBoardChain(supabase, pSlug, tSlug, bSlug);
   if (!chain) notFound();
 
-  const { data: meetings } = await supabase
+  const { data: rawMeetings } = await supabase
     .from('meetings')
-    .select('id, title, meeting_date')
+    .select('id, title, meeting_date, segments(count)')
     .eq('board_id', chain.board.id)
     .eq('status', 'published')
     .order('meeting_date', { ascending: false });
+
+  const meetings = rawMeetings as Array<{
+    id: string;
+    title: string | null;
+    meeting_date: string | null;
+    segments: Array<{ count: number }>;
+  }> | null;
 
   return (
     <main className="mx-auto max-w-3xl p-8">
@@ -43,7 +50,7 @@ export default async function BoardPage({
               className="block text-blue-700 hover:underline"
             >
               <span className="block text-sm text-slate-500">
-                {m.meeting_date ?? 'Date unknown'}
+                {m.meeting_date ?? 'Date unknown'} · {m.segments[0]?.count ?? 0} segments
               </span>
               <span className="block">{m.title ?? '(untitled)'}</span>
             </Link>
