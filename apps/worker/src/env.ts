@@ -7,6 +7,7 @@ const schema = z.object({
   ASR_VENDOR_API_KEY: z.string().min(1),
   ASR_WEBHOOK_SECRET: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
+  OPENAI_API_KEY: z.string().min(1),
 });
 
 export type WorkerEnv = z.infer<typeof schema>;
