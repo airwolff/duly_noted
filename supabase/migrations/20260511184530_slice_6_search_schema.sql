@@ -261,3 +261,115 @@ $$;
 
 revoke all on function public.abandon_embedding_meeting(uuid, text) from public;
 grant execute on function public.abandon_embedding_meeting(uuid, text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- search_segments(query_text, query_embedding, match_count, weights, rrf_k)
+--
+-- Hybrid lexical + semantic search across segments. Returns the top
+-- match_count rows ordered by Reciprocal Rank Fusion score, joined to
+-- parent meetings/boards/towns/publications so the reader can render
+-- breadcrumbs and a meeting-page link.
+--
+-- NOT SECURITY DEFINER. Runs as the caller so the Slice 5 membership-
+-- aware RLS policies on segments and joined parent tables gate the
+-- result set. The Edge Function forwards the caller's JWT to PostgREST.
+--
+-- Implementation follows supabase.com/docs/guides/ai/hybrid-search.
+-- RRF formula: score = sum_i ( weight_i / (rrf_k + rank_i) ).
+-- Inner-CTE limit (match_count * 2, capped at 100) is the canonical fan-
+-- out-then-rerank pattern.
+--
+-- The 50-row hard cap matches the Slice 6 product surface: default
+-- match_count is 20 with a single "show more" affordance bumping to
+-- match_count = 50 per SPEC §Stage 9. The cap is here as a defensive
+-- ceiling — never a real result-size constraint at v1 scale.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.search_segments(
+  query_text         text,
+  query_embedding    extensions.vector(1536),
+  match_count        int,
+  full_text_weight   float default 1.0,
+  semantic_weight    float default 1.0,
+  rrf_k              int   default 50
+)
+returns table (
+  segment_id          uuid,
+  meeting_id          uuid,
+  publication_slug    text,
+  publication_name    text,
+  town_slug           text,
+  town_name           text,
+  board_slug          text,
+  board_name          text,
+  meeting_title       text,
+  meeting_date        date,
+  segment_title       text,
+  segment_description text,
+  marker_type         text,
+  transcript_excerpt  text,
+  start_time_seconds  int,
+  rrf_score           float
+)
+language sql
+stable
+set search_path = public, extensions
+as $$
+  with full_text as (
+    select
+      s.id,
+      row_number() over (
+        order by ts_rank_cd(s.search_tsv, websearch_to_tsquery('english', query_text)) desc
+      ) as rank_ix
+    from public.segments s
+    where s.search_tsv @@ websearch_to_tsquery('english', query_text)
+    order by ts_rank_cd(s.search_tsv, websearch_to_tsquery('english', query_text)) desc
+    limit least(match_count, 50) * 2
+  ),
+  semantic as (
+    select
+      s.id,
+      row_number() over (order by s.embedding <=> query_embedding) as rank_ix
+    from public.segments s
+    where s.embedding is not null
+    order by s.embedding <=> query_embedding
+    limit least(match_count, 50) * 2
+  )
+  select
+    s.id                       as segment_id,
+    m.id                       as meeting_id,
+    p.slug                     as publication_slug,
+    p.name                     as publication_name,
+    t.slug                     as town_slug,
+    t.name                     as town_name,
+    b.slug                     as board_slug,
+    b.name                     as board_name,
+    m.title                    as meeting_title,
+    m.meeting_date,
+    s.title                    as segment_title,
+    s.description              as segment_description,
+    s.marker_type,
+    s.transcript_excerpt,
+    s.start_time_seconds,
+    (
+      coalesce(1.0 / (rrf_k + full_text.rank_ix), 0.0) * full_text_weight +
+      coalesce(1.0 / (rrf_k + semantic.rank_ix),  0.0) * semantic_weight
+    )                          as rrf_score
+  from public.segments s
+    join public.meetings    m on m.id = s.meeting_id
+    join public.boards      b on b.id = m.board_id
+    join public.towns       t on t.id = b.town_id
+    join public.publications p on p.id = t.publication_id
+    left join full_text on full_text.id = s.id
+    left join semantic  on semantic.id  = s.id
+  where full_text.id is not null or semantic.id is not null
+  order by rrf_score desc
+  limit least(match_count, 50);
+$$;
+
+revoke all on function public.search_segments(
+  text, extensions.vector(1536), int, float, float, int
+) from public;
+grant execute on function public.search_segments(
+  text, extensions.vector(1536), int, float, float, int
+) to authenticated;
