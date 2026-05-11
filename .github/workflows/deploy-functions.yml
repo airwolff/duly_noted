@@ -20,3 +20,6 @@ jobs:
 
       - name: Deploy asr-webhook
         run: supabase functions deploy asr-webhook --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy search
+        run: supabase functions deploy search --project-ref "$SUPABASE_PROJECT_REF"
