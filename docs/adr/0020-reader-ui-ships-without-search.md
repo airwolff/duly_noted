@@ -1,8 +1,9 @@
 # 0020 — Reader UI v1 ships without search
 
-- Status: Accepted
+- Status: Superseded by Slice 6
 - Date: 2026-05-10
 - Slice: 5
+- Superseded by: docs/superpowers/plans/2026-05-11-slice-6-hybrid-search.md, ADR 0021, ADR 0022.
 
 ## Context
 
