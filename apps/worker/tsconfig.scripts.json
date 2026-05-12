@@ -5,6 +5,6 @@
     "lib": ["ES2022"],
     "types": ["node"]
   },
-  "include": ["scripts/**/*", "src/**/*"],
+  "include": ["scripts/**/*"],
   "exclude": ["dist", "node_modules", "**/*.test.ts"]
 }

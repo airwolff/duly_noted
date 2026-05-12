@@ -699,7 +699,7 @@ The Edge Function is the only surface that holds `OPENAI_API_KEY` at query time.
 **Embedding pipeline (worker side).** New `apps/worker/src/embedding/` handler picks up `embedding` rows via `claim_embedding_meeting()`, generates one embedding per segment via OpenAI (model `text-embedding-3-small`, dimensions 1536 native), writes via `complete_embedding`, advances the row to `published`. Failure path uses `abandon_embedding_meeting` to set `failed` with `last_error`. Failure modes mirror Stage 6:
 
 - OpenAI API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s); honors `retry-after` headers when present. After exhaustion, the row fails.
-- Length-bound violation: `text-embedding-3-small` has an 8,192 token input cap. v1 segment lengths (title + description + transcript_excerpt) are well below this. The handler validates input length defensively before each API call as a guard.
+- Length-bound coverage: `text-embedding-3-small` has an 8,192 token input cap. v1 inputs are structurally bounded by `TITLE_MAX_LEN + DESCRIPTION_MAX_LEN + TRANSCRIPT_EXCERPT_MAX_LEN` (set in `packages/shared/src/embedding/inputs.ts`), well under 8K tokens via the ~4-char-per-token proxy. The structural bound is the operative contract. Revisit if any of those constants is raised or the embedding model is changed.
 - Empty `segments` array at pickup: handler fails the row before any API call. Should not occur post-Slice-3.
 - Response-shape validation: each returned embedding is Zod-validated for length (must equal 1536) and element type (number) before persistence.
 
