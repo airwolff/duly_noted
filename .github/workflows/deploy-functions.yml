@@ -23,3 +23,6 @@ jobs:
 
       - name: Deploy search
         run: supabase functions deploy search --project-ref "$SUPABASE_PROJECT_REF"
+
+      - name: Deploy invite-user
+        run: supabase functions deploy invite-user --project-ref "$SUPABASE_PROJECT_REF"
