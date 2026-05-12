@@ -581,7 +581,7 @@ Weights: A on `title`, B on `description`, C on `transcript_excerpt`. The semant
 
 ## Slice 7 schema deltas
 
-Single migration file `NNNN_slice_7_invitations_schema.sql`, backwards-compatible with the previously deployed worker and web app. Additive: new `invitations` table, new trigger function and trigger on `auth.users`, new `resolve_pending_invitations()` RPC. No changes to `memberships`, `publications`, `towns`, `boards`, `meetings`, or `segments` shapes. No changes to existing RLS policies on those tables.
+Single migration file `NNNN_slice_7_invitations_schema.sql`, backwards-compatible with the previously deployed worker and web app. Additive: new `invitations` table, new trigger function and trigger on `auth.users`, new `resolve_pending_invitations()` RPC, and new `check_invite_conflicts(p_email text, p_publication_id uuid)` RPC (service-role only, called from the `invite-user` Edge Function). A test-only `exec_sql_unsafe(sql text)` helper lives in `supabase/seed.sql` (seed-only, never in a migration) to support the invitations test suite. No changes to `memberships`, `publications`, `towns`, `boards`, `meetings`, or `segments` shapes. No changes to existing RLS policies on those tables.
 
 **New table `invitations`:**
 
@@ -652,9 +652,22 @@ create function public.resolve_pending_invitations() returns int
   as $$ ... $$;
 ```
 
-Reads `auth.uid()` and `auth.jwt() ->> 'email'`. Finds matching open invitations for the calling user's email; performs the same `INSERT INTO memberships ... ON CONFLICT DO NOTHING` plus `UPDATE invitations SET accepted_at` as the trigger. Returns the count of newly-resolved invitations.
+Reads `auth.uid()` and resolves the caller's email from `auth.users` directly (`SELECT email FROM auth.users WHERE id = auth.uid()`), not from `auth.jwt() ->> 'email'`. JWT claims are a point-in-time snapshot (up to 1-hour TTL by default); reading from `auth.users` ensures the current authoritative email is used even if the JWT has not yet refreshed after an email change. Consistent with ADR 0023 §"Why Option B over Options C and D." Finds matching open invitations for the calling user's email; performs the same `INSERT INTO memberships ... ON CONFLICT DO NOTHING` plus `UPDATE invitations SET accepted_at` as the trigger. Returns the count of newly-resolved invitations.
 
 Called from `apps/web/middleware.ts` on session establishment (idempotent; no-op for users with no matching open invitations). Closes the edge case where an admin invites an email whose `auth.users` row already exists (no INSERT event for the trigger to fire on) — for example, a user who signed up for an unrelated reason before being invited, or a developer's test account.
+
+**Stored procedure `public.check_invite_conflicts(p_email text, p_publication_id uuid)`:**
+
+```sql
+create function public.check_invite_conflicts(p_email text, p_publication_id uuid)
+  returns text
+  language sql
+  security definer
+  set search_path = public, auth
+  as $$ ... $$;
+```
+
+Pre-flight conflict check called from the `invite-user` Edge Function before `inviteUserByEmail`. Returns one of `'ok'`, `'already_member'`, or `'invitation_pending'`. The `already_member` branch joins `auth.users` to `memberships` on lowercased email — this is the reason for `SECURITY DEFINER`: `auth.users` is not exposed to PostgREST under `authenticated` or `service_role` via the REST API, so the conflict check cannot be expressed as two inline queries from the Edge Function. The `invitation_pending` branch reads `public.invitations` directly. Grant: `service_role` only — the function is never called from an authenticated user surface and never returns row data, only the enum-shaped status string.
 
 **RLS on `invitations`:**
 
@@ -754,7 +767,7 @@ Lives at `supabase/functions/invite-user/`. Receives `POST { email: string, role
 1. Verify JWT, extract `auth.uid()`.
 2. Re-verify admin role server-side: `SELECT 1 FROM memberships WHERE user_id = auth.uid() AND publication_id = req.publication_id AND role = 'admin'`. Return 403 if no match. (The web layer's role check is the first gate; this is defense-in-depth — the Edge Function never trusts the web client's claim about the caller's role.)
 3. Validate input: email regex + lowercase normalization, role in the allowed set, publication_id is a uuid.
-4. Check for conflicts: existing membership for (email, publication_id) → return 409 with "already a member" message; existing open invitation for (email, publication_id) → return 409 with "invitation already pending" message.
+4. Check for conflicts by calling `public.check_invite_conflicts(p_email, p_publication_id)` (RPC defined in §"Slice 7 schema deltas"). On `'already_member'` return 409 with "already a member" message; on `'invitation_pending'` return 409 with "invitation already pending" message; on `'ok'` proceed.
 5. `INSERT INTO invitations (email, publication_id, role, invited_by_user_id) VALUES (lower(req.email), req.publication_id, req.role, auth.uid())`.
 6. Call `supabase.auth.admin.inviteUserByEmail(email)` with service_role client. On vendor error, mark the just-inserted invitation `revoked_at = now()` for cleanup and return the vendor error.
 7. Return 200 with the invitation id.

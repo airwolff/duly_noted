@@ -12,6 +12,13 @@ export async function middleware(request: NextRequest) {
   const env = loadEnv();
   const response = NextResponse.next({ request });
 
+  // Tracks whether the Supabase SSR helper wrote a session cookie whose
+  // value differs from the request's incoming cookie — i.e., the token
+  // actually rotated (or this is a first request with no prior cookie).
+  // Used to gate resolve_pending_invitations() to the doc-described
+  // "session establishment" cadence rather than firing per request.
+  let sessionCookieRotated = false;
+
   const supabase = createServerClient({
     supabaseUrl: env.NEXT_PUBLIC_SUPABASE_URL,
     supabaseAnonKey: env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
@@ -20,6 +27,9 @@ export async function middleware(request: NextRequest) {
         request.cookies.getAll().map((cookie) => ({ name: cookie.name, value: cookie.value })),
       setAll: (cookiesToSet) => {
         for (const { name, value, options } of cookiesToSet) {
+          if (request.cookies.get(name)?.value !== value) {
+            sessionCookieRotated = true;
+          }
           response.cookies.set({ name, value, ...options });
         }
       },
@@ -32,10 +42,14 @@ export async function middleware(request: NextRequest) {
     // existed in auth.users when an admin invited them (no INSERT
     // event for the trigger to fire on). Idempotent; no-op for users
     // with no open invitations. Logged but never blocks the request —
-    // same posture as the trigger's RAISE WARNING wrapper.
-    const { error: resolveError } = await supabase.rpc('resolve_pending_invitations');
-    if (resolveError) {
-      console.warn('middleware: resolve_pending_invitations failed', resolveError);
+    // same posture as the trigger's RAISE WARNING wrapper. Gated on
+    // session-cookie rotation so the RPC fires at most once per token
+    // refresh interval (Supabase default 1h), not once per page load.
+    if (sessionCookieRotated) {
+      const { error: resolveError } = await supabase.rpc('resolve_pending_invitations');
+      if (resolveError) {
+        console.warn('middleware: resolve_pending_invitations failed', resolveError);
+      }
     }
     return response;
   }
