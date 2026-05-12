@@ -12,12 +12,15 @@ import { markFailed } from './fail.js';
 import type { CallStructured } from './anthropic.js';
 import { runSegmentationOnce } from './segment.js';
 import { runSummarizationOnce } from './summarize.js';
+import type { CallEmbedder } from '../embedding/openai.js';
+import { runEmbeddingOnce } from '../embedding/run.js';
 
 export type RunOutcome =
   | { kind: 'idle' }
   | { kind: 'submitted'; meetingId: string; transcriptId: string }
   | { kind: 'segmented'; meetingId: string; segmentCount: number }
   | { kind: 'summarized'; meetingId: string }
+  | { kind: 'embedded'; meetingId: string; segmentCount: number }
   | { kind: 'failed'; meetingId: string; message: string };
 
 export interface RunDeps {
@@ -26,17 +29,25 @@ export interface RunDeps {
   asrVendorApiKey: string;
   asrWebhookSecret: string;
   callStructured: CallStructured;
+  embed: CallEmbedder;
 }
 
 /**
  * Run the worker pipeline for a single tick. Dispatch order is closest-to-
- * publication first: summarize → segment → pending. Older work drains
+ * publication first: embed → summarize → segment → pending. Older work drains
  * through the pipeline rather than starving behind newer pending rows. Each
  * handler returns idle if there is no work in its state, falling through to
  * the next. On any error after a claim, the meeting is marked failed and
  * the tick returns; per CLAUDE.md §7 there is no automatic retry.
  */
 export async function runPipelineOnce(deps: RunDeps): Promise<RunOutcome> {
+  const embedOutcome = await runEmbeddingOnce({
+    supabase: deps.supabase,
+    embed: deps.embed,
+  });
+  if (embedOutcome.kind !== 'idle') {
+    return embedOutcome;
+  }
   const summarizeOutcome = await runSummarizationOnce({
     supabase: deps.supabase,
     callStructured: deps.callStructured,

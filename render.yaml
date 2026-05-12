@@ -27,11 +27,14 @@ services:
       - fromGroup: duly-noted-cron
 
 # Secret values are populated via the Render dashboard after first deploy.
-# Per SPEC.md Stage 1 secrets matrix:
+# Per SPEC.md Stage 1 secrets matrix (Slice 6 update):
 #   - duly-noted-shared: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
-#   - duly-noted-worker: ASR_VENDOR_API_KEY, ASR_WEBHOOK_SECRET
+#   - duly-noted-worker: ASR_VENDOR_API_KEY, ASR_WEBHOOK_SECRET, OPENAI_API_KEY
 #   - duly-noted-cron:   YOUTUBE_API_KEY
-# The cron must NOT see ASR_VENDOR_API_KEY; the worker must NOT see YOUTUBE_API_KEY.
+# The cron must NOT see ASR_VENDOR_API_KEY or OPENAI_API_KEY; the worker
+# must NOT see YOUTUBE_API_KEY. ANTHROPIC_API_KEY is provisioned via the
+# Render dashboard separately (it is not currently declared in
+# render.yaml — Slice 4 carryover).
 envVarGroups:
   - name: duly-noted-shared
     envVars:
@@ -44,6 +47,8 @@ envVarGroups:
       - key: ASR_VENDOR_API_KEY
         sync: false
       - key: ASR_WEBHOOK_SECRET
+        sync: false
+      - key: OPENAI_API_KEY
         sync: false
   - name: duly-noted-cron
     envVars:

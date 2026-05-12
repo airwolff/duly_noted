@@ -25,6 +25,11 @@ export default async function PublicationPage({
   return (
     <main className="mx-auto max-w-3xl p-8">
       <h1 className="text-3xl font-bold">{publication.name}</h1>
+      <p className="mt-2">
+        <Link href={`/${publication.slug}/search`} className="text-blue-700 hover:underline">
+          Search this publication →
+        </Link>
+      </p>
       <ul className="mt-6 space-y-2">
         {(towns ?? []).map((t) => (
           <li key={t.id}>

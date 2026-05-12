@@ -14,6 +14,8 @@ export type MeetingStatus =
   | 'chaptering'
   | 'summarizing'
   | 'summarizing_inflight'
+  | 'embedding'
+  | 'embedding_inflight'
   | 'review'
   | 'published'
   | 'failed';
@@ -215,6 +217,8 @@ export interface Database {
           transcript_excerpt: string;
           created_at: string;
           updated_at: string;
+          embedding: string | null;
+          search_tsv: string | null;
         };
         Insert: {
           id?: string;
@@ -228,6 +232,7 @@ export interface Database {
           transcript_excerpt: string;
           created_at?: string;
           updated_at?: string;
+          embedding?: string | null;
         };
         Update: {
           id?: string;
@@ -241,6 +246,7 @@ export interface Database {
           transcript_excerpt?: string;
           created_at?: string;
           updated_at?: string;
+          embedding?: string | null;
         };
         Relationships: [];
       };
@@ -286,6 +292,49 @@ export interface Database {
       complete_summarization: {
         Args: { p_meeting_id: string; p_summary: string };
         Returns: void;
+      };
+      claim_embedding_meeting: {
+        Args: Record<string, never>;
+        Returns: {
+          id: string;
+          segments: Json;
+        }[];
+      };
+      complete_embedding: {
+        Args: { p_meeting_id: string; p_segment_embeddings: Json };
+        Returns: void;
+      };
+      abandon_embedding_meeting: {
+        Args: { p_meeting_id: string; p_error_text: string };
+        Returns: void;
+      };
+      search_segments: {
+        Args: {
+          query_text: string;
+          query_embedding: string;
+          match_count: number;
+          full_text_weight?: number;
+          semantic_weight?: number;
+          rrf_k?: number;
+        };
+        Returns: {
+          segment_id: string;
+          meeting_id: string;
+          publication_slug: string;
+          publication_name: string;
+          town_slug: string;
+          town_name: string;
+          board_slug: string;
+          board_name: string;
+          meeting_title: string | null;
+          meeting_date: string | null;
+          segment_title: string;
+          segment_description: string;
+          marker_type: 'AGENDA_ITEM' | 'PUBLIC_COMMENT' | 'DISCUSSION' | 'VOTE' | 'PROCEDURE';
+          transcript_excerpt: string;
+          start_time_seconds: number;
+          rrf_score: number;
+        }[];
       };
     };
     Enums: {

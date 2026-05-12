@@ -18,3 +18,5 @@ export type {
 export * from './segmentation/index.js';
 
 export * from './summarization/index.js';
+
+export * from './embedding/index.js';
