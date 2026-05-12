@@ -3,6 +3,7 @@ import { getSupabaseServerClient } from '@/lib/supabase-server.js';
 import { resolvePublication } from '@/lib/resolvers.js';
 import { InviteForm } from './invite-form.js';
 
+export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
 
 export default async function AdminMembersPage({
