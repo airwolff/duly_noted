@@ -31,7 +31,7 @@ function LoginForm() {
         : undefined;
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: callbackUrl },
+      options: { emailRedirectTo: callbackUrl, shouldCreateUser: false },
     });
 
     if (error) {
@@ -67,7 +67,11 @@ function LoginForm() {
       </form>
       {status === 'sent' && <p className="mt-4">Check your email for a sign-in link.</p>}
       {status === 'error' && (
-        <p className="mt-4 text-red-700">Could not send link: {errorMessage}</p>
+        <p className="mt-4 text-red-700">
+          {/^signups? not allowed/i.test(errorMessage)
+            ? 'This email is not recognized. Please contact your publication administrator to request access.'
+            : `Could not send link: ${errorMessage}`}
+        </p>
       )}
     </main>
   );

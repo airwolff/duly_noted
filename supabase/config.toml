@@ -48,3 +48,6 @@ policy = "oneshot"
 
 [functions.asr-webhook]
 verify_jwt = false
+
+[functions.invite-user]
+verify_jwt = true

@@ -579,6 +579,141 @@ Weights: A on `title`, B on `description`, C on `transcript_excerpt`. The semant
 
 **Pass 2 status.** Remaining deferred from prior slices: trigger on remaining tables, FK indexes on `memberships.publication_id` and other un-indexed FK-side columns, soft-delete columns, search column on `meetings.summary` (intentionally deferred — see Stage 9).
 
+## Slice 7 schema deltas
+
+Single migration file `NNNN_slice_7_invitations_schema.sql`, backwards-compatible with the previously deployed worker and web app. Additive: new `invitations` table, new trigger function and trigger on `auth.users`, new `resolve_pending_invitations()` RPC, and new `check_invite_conflicts(p_email text, p_publication_id uuid)` RPC (service-role only, called from the `invite-user` Edge Function). A test-only `exec_sql_unsafe(sql text)` helper lives in `supabase/seed.sql` (seed-only, never in a migration) to support the invitations test suite. No changes to `memberships`, `publications`, `towns`, `boards`, `meetings`, or `segments` shapes. No changes to existing RLS policies on those tables.
+
+**New table `invitations`:**
+
+```sql
+create table public.invitations (
+  id                   uuid primary key default gen_random_uuid(),
+  email                text not null check (email = lower(email)),
+  publication_id       uuid not null references public.publications(id) on delete cascade,
+  role                 text not null check (role in ('reader', 'editor', 'admin')),
+  invited_by_user_id   uuid references auth.users(id) on delete set null,
+  created_at           timestamptz not null default now(),
+  expires_at           timestamptz not null default (now() + interval '7 days'),
+  accepted_at          timestamptz,
+  revoked_at           timestamptz
+);
+```
+
+Email is stored lowercase, enforced by CHECK. Supabase Auth has stored `auth.users.email` lowercased since gotrue PR #110 (2021), so `NEW.email` arriving in the trigger is already normalized; the CHECK is defense-in-depth.
+
+`invited_by_user_id` is nullable to support the system-bootstrap case (Andy invites Aaron before Andy has a membership row of his own) and uses `ON DELETE SET NULL` so audit trail of past invitations survives the inviter's removal.
+
+`expires_at` defaults to 7 days per Makerkit's reference pattern for invitation TTLs. `accepted_at` and `revoked_at` are null on open invitations; an invitation is "open" iff both are null and `expires_at > now()`.
+
+**Indexes:**
+
+- Partial unique index on open invitations:
+  ```sql
+  create unique index invitations_open_email_pub_unique_idx
+    on public.invitations (email, publication_id)
+    where accepted_at is null and revoked_at is null;
+  ```
+  Enforces "at most one open invitation per email-publication pair" without blocking re-issuance after acceptance or revocation. The `email` column is already lowercased by CHECK, so no `lower()` expression in the index.
+- FK-side index on `publication_id`:
+  ```sql
+  create index invitations_publication_id_idx
+    on public.invitations (publication_id);
+  ```
+  Supports the admin-aware RLS subquery and the pending-list view query keyed by publication.
+
+**Trigger function `public.handle_new_auth_user()`:**
+
+`SECURITY DEFINER`, owner `postgres`. The function body MUST be wrapped in `EXCEPTION WHEN OTHERS THEN RAISE WARNING ...; RETURN NEW;` per the CLAUDE.md §6 defensive-trigger rule — any unhandled exception inside an `auth.users` trigger rolls back the auth subsystem's INSERT and blocks signup with a misleading "Database error saving new user" response. Failure to perform the downstream side effect (membership resolution) is recoverable; blocked signup is not.
+
+Function body:
+
+1. Selects all matching open invitations: `email = NEW.email AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`. Email comparison is exact-equality (no `lower()`) because both sides are lowercased.
+2. For each match: `INSERT INTO public.memberships (user_id, publication_id, role) VALUES (NEW.id, invitation.publication_id, invitation.role) ON CONFLICT (user_id, publication_id) DO NOTHING`. The ON CONFLICT clause is idempotent across re-runs and tolerates the case where a user already has a membership for that publication (e.g., previously invited via a different path).
+3. Marks each consumed invitation: `UPDATE public.invitations SET accepted_at = now() WHERE id = ANY($matched_ids)`.
+4. On any exception in steps 1–3: `RAISE WARNING 'handle_new_auth_user: failed for user_id=%, email=%, error=%', NEW.id, NEW.email, SQLERRM; RETURN NEW;`. Signup completes; the affected user lands at no-membership state; Andy can run `resolve_pending_invitations()` later to retry or correct manually.
+
+**Trigger `on_auth_user_created`:**
+
+```sql
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_auth_user();
+```
+
+The trigger fires on every `auth.users` INSERT regardless of `email_confirmed_at` state. Membership is created before the user confirms email ownership; this is structurally safe because the user cannot authenticate (and therefore cannot read RLS-gated rows) until they complete the magic-link click that sets `email_confirmed_at`. The membership exists in advance of authentication, not before authorization.
+
+**Stored procedure `public.resolve_pending_invitations()`:**
+
+```sql
+create function public.resolve_pending_invitations() returns int
+  language plpgsql
+  security definer
+  set search_path = public, auth
+  as $$ ... $$;
+```
+
+Reads `auth.uid()` and resolves the caller's email from `auth.users` directly (`SELECT email FROM auth.users WHERE id = auth.uid()`), not from `auth.jwt() ->> 'email'`. JWT claims are a point-in-time snapshot (up to 1-hour TTL by default); reading from `auth.users` ensures the current authoritative email is used even if the JWT has not yet refreshed after an email change. Consistent with ADR 0023 §"Why Option B over Options C and D." Finds matching open invitations for the calling user's email; performs the same `INSERT INTO memberships ... ON CONFLICT DO NOTHING` plus `UPDATE invitations SET accepted_at` as the trigger. Returns the count of newly-resolved invitations.
+
+Called from `apps/web/middleware.ts` on session establishment (idempotent; no-op for users with no matching open invitations). Closes the edge case where an admin invites an email whose `auth.users` row already exists (no INSERT event for the trigger to fire on) — for example, a user who signed up for an unrelated reason before being invited, or a developer's test account.
+
+**Stored procedure `public.check_invite_conflicts(p_email text, p_publication_id uuid)`:**
+
+```sql
+create function public.check_invite_conflicts(p_email text, p_publication_id uuid)
+  returns text
+  language sql
+  security definer
+  set search_path = public, auth
+  as $$ ... $$;
+```
+
+Pre-flight conflict check called from the `invite-user` Edge Function before `inviteUserByEmail`. Returns one of `'ok'`, `'already_member'`, or `'invitation_pending'`. The `already_member` branch joins `auth.users` to `memberships` on lowercased email — this is the reason for `SECURITY DEFINER`: `auth.users` is not exposed to PostgREST under `authenticated` or `service_role` via the REST API, so the conflict check cannot be expressed as two inline queries from the Edge Function. The `invitation_pending` branch reads `public.invitations` directly. Grant: `service_role` only — the function is never called from an authenticated user surface and never returns row data, only the enum-shaped status string.
+
+**RLS on `invitations`:**
+
+Enabled in the same migration that creates the table.
+
+```sql
+alter table public.invitations enable row level security;
+
+create policy "service_role full access invitations"
+  on public.invitations for all to service_role using (true) with check (true);
+
+create policy "authenticated admin select invitations"
+  on public.invitations for select to authenticated
+  using (
+    exists (
+      select 1 from public.memberships m
+      where m.user_id = (select auth.uid())
+        and m.publication_id = invitations.publication_id
+        and m.role = 'admin'
+    )
+  );
+```
+
+The `authenticated` SELECT policy lets admins see their own publication's invitations (for the pending-invitations list view in the admin UI). No `authenticated` policies for INSERT, UPDATE, or DELETE — all mutations flow through the `invite-user` Edge Function under service_role, which re-verifies the caller's admin role server-side before any write.
+
+The `(select auth.uid())` wrapping is the documented Supabase performance optimization that hoists the function call into an initPlan, evaluated once per statement rather than once per row.
+
+**GRANTs:**
+
+```sql
+grant all on public.invitations to service_role;
+grant select on public.invitations to authenticated;
+grant execute on function public.handle_new_auth_user() to supabase_auth_admin;
+grant execute on function public.resolve_pending_invitations() to authenticated;
+```
+
+The grant of `handle_new_auth_user()` to `supabase_auth_admin` is required because the trigger fires under that role's identity. Without the grant, the trigger raises permission-denied and signup breaks (the failure mode the EXCEPTION wrapper specifically defends against, but the grant prevents the failure in the first place).
+
+**`memberships.user_id` FK verification:**
+
+Verify the existing FK `memberships.user_id → auth.users.id` has `ON DELETE CASCADE`. If not, the same migration alters it. Without cascade, deleting a user from `auth.users` (Supabase Dashboard, admin SDK) orphans the membership row and produces FK violations as "violates foreign key constraint memberships_user_id_fkey on table memberships." Widely-reported Supabase footgun.
+
+**Storage bucket.** No new bucket.
+
+**Pass 2 status.** No change. Remaining deferred from prior slices unchanged.
+
 ---
 
 # Stage 7 — auth subset (as built)
@@ -604,9 +739,55 @@ Magic-link only. No passwords, no OAuth at v1.
 
 The service-role key, the ASR vendor key, the embedding vendor key (`OPENAI_API_KEY`), and the webhook secret never reach Cloudflare. Webhook receivers run on Supabase Edge Functions (Stage 2); the search query-embedding surface runs on Supabase Edge Functions (Stage 9). Cloudflare Pages env is publishable-keys-only.
 
-**Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options.emailRedirectTo: window.location.origin + '/auth/callback' })`. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request. `POST /auth/signout` clears it.
+**Flow.** `apps/web/src/app/login/page.tsx` calls `signInWithOtp({ email, options: { shouldCreateUser: false, emailRedirectTo: window.location.origin + '/auth/callback' } })`. Closed signup: only emails that already have an `auth.users` row (created by `inviteUserByEmail` at invitation time) can request a magic link. Random emails entered at the login form receive a generic auth error; the form copy directs unrecognized users to contact their administrator. The user clicks the email, lands at `/auth/callback?code=…`, the route handler exchanges the code for a session via `exchangeCodeForSession`, and the Supabase cookie is written by the SSR helpers. `apps/web/middleware.ts` refreshes the session cookie on every non-asset request and additionally calls `resolve_pending_invitations()` on session establishment to resolve any open invitations whose `auth.users` row pre-existed the invitation (rare; see Slice 7 schema deltas). `POST /auth/signout` clears the cookie.
 
-**Open items.** None. Slice 5 closed the magic-link round-trip deferral; the reader UI ships behind authenticated routes, exercising the full sign-in flow end-to-end. SMTP provider as-built: Supabase built-in SMTP. The decision is recorded inline in §Stage 8 and does not warrant a separate ADR.
+**Invitations and admin onboarding (Slice 7).**
+
+Membership provisioning is invitation-based, not self-serve. The invitation lifecycle:
+
+1. An admin of a publication (or, for the initial bootstrap, Andy with service-role access) creates a pending invitation by calling the `invite-user` Edge Function. The Edge Function inserts a row into `public.invitations` (email + publication_id + role + invited_by_user_id) and calls `supabase.auth.admin.inviteUserByEmail(email)`. Supabase creates the `auth.users` row (with `email_confirmed_at = NULL`) and sends the default Supabase Invite email template.
+2. The `on_auth_user_created` trigger on `auth.users` fires at INSERT time. Its function `handle_new_auth_user()` finds open invitations matching `NEW.email`, inserts the corresponding `memberships` rows (idempotent via `ON CONFLICT DO NOTHING`), and marks the invitations `accepted_at = now()`. Membership exists in the database before the user authenticates; authentication is gated by the email-click confirmation.
+3. The invited user clicks the email link, lands at `/auth/callback`, exchanges the code for a session. RLS opens to them based on the membership row created in step 2. `resolve_pending_invitations()` runs in middleware as defense-in-depth; for the inviteUserByEmail path it is a no-op because the trigger already resolved the invitation.
+
+Schema, trigger, RPC, RLS, and grants are detailed in §"Slice 7 schema deltas" above.
+
+**Admin UI surface (Slice 7).**
+
+A single admin route ships at `/{publication.slug}/admin/members`. Server component, authenticated, with an additional admin-role check on the requested publication (server-side `SELECT role FROM memberships WHERE user_id = auth.uid() AND publication_id = $? AND role = 'admin'`; on no match the page returns `notFound()` to hide the route from non-admins). Page content:
+
+- Invite form: email input (validated lowercase), role selector (`reader` | `editor` | `admin`), submit. Posts via server action to the `invite-user` Edge Function with the caller's JWT.
+- Pending invitations table: rows from `invitations WHERE publication_id = $? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`, ordered by `created_at DESC`. Columns: email, role, created_at, expires_at. RLS-filtered to the current publication's admins per the `authenticated admin select invitations` policy.
+
+The admin UI does NOT ship at v1: member list view (active memberships), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view. These residual surfaces stay in Backlog B4. The Slice 7 admin surface is narrowly scoped to "invite a new member and see what's pending," which is the minimum that gives the publication operator (Aaron) self-service ability without an admin chokepoint at Andy.
+
+**Edge Function `invite-user`.**
+
+Lives at `supabase/functions/invite-user/`. Receives `POST { email: string, role: 'reader' | 'editor' | 'admin', publication_id: uuid }`. JWT verification ENABLED at the gateway (user-facing function, not a vendor webhook). Body:
+
+1. Verify JWT, extract `auth.uid()`.
+2. Re-verify admin role server-side: `SELECT 1 FROM memberships WHERE user_id = auth.uid() AND publication_id = req.publication_id AND role = 'admin'`. Return 403 if no match. (The web layer's role check is the first gate; this is defense-in-depth — the Edge Function never trusts the web client's claim about the caller's role.)
+3. Validate input: email regex + lowercase normalization, role in the allowed set, publication_id is a uuid.
+4. Check for conflicts by calling `public.check_invite_conflicts(p_email, p_publication_id)` (RPC defined in §"Slice 7 schema deltas"). On `'already_member'` return 409 with "already a member" message; on `'invitation_pending'` return 409 with "invitation already pending" message; on `'ok'` proceed.
+5. `INSERT INTO invitations (email, publication_id, role, invited_by_user_id) VALUES (lower(req.email), req.publication_id, req.role, auth.uid())`.
+6. Call `supabase.auth.admin.inviteUserByEmail(email)` with service_role client. On vendor error, mark the just-inserted invitation `revoked_at = now()` for cleanup and return the vendor error.
+7. Return 200 with the invitation id.
+
+The Edge Function is the only surface that calls `auth.admin.inviteUserByEmail` in the system. `apps/web` does not hold the service-role key and cannot call admin APIs directly — per CLAUDE.md §6's service-role boundary preserved via Edge Function intermediation.
+
+**Closed signup posture.**
+
+`shouldCreateUser: false` on the login form means random emails cannot self-register. The only paths into `auth.users` at v1 are:
+
+- `inviteUserByEmail` from the `invite-user` Edge Function (admin-triggered).
+- Manual `inviteUserByEmail` or `createUser` from Andy's local script (initial bootstrap of Aaron's admin membership).
+
+There is no public signup surface. The Stage 8 "Authenticated user with no membership row" edge case can still occur (e.g., an invitation expires before the user clicks, or an admin revokes an invitation after `auth.users` creation), but the surface area for unintended access is bounded to invited-then-revoked rather than open-to-anyone.
+
+**Trigger timing note.** The `on_auth_user_created` trigger fires at `auth.users` INSERT, which for the `inviteUserByEmail` path is at invitation creation, not at the user's first click. Membership therefore exists in the database before `email_confirmed_at` is set. This is safe: the user cannot authenticate (no session, no JWT) until the magic-link click, so RLS gates remain effective. The "membership before email confirmation" ordering would only be a defect if a future audit conflated authentication (the click) with authorization (the membership row); it does not.
+
+**External dependency note.** `auth.users` is a Supabase-managed schema. The trigger function depends on the stable shape of `auth.users.id` (uuid), `auth.users.email` (lowercase text), and the existence of an INSERT event on row creation. Revisit trigger: any Supabase changelog entry touching the schema of `auth.users.id`, `auth.users.email`, or modifying the auth subsystem's transactional INSERT semantics.
+
+**Open items.** None as of Slice 7. Custom SMTP migration deferred until the small-allowlist rate cap becomes a problem.
 
 ---
 
@@ -625,6 +806,7 @@ The service-role key, the ASR vendor key, the embedding vendor key (`OPENAI_API_
 /{publication.slug}/{town.slug}/{board.slug}                        meeting list (published only)
 /{publication.slug}/{town.slug}/{board.slug}/{meeting.id}           meeting page (hybrid layout)
 /{publication.slug}/search?q=...                                    search (Stage 9, Slice 6)
+/{publication.slug}/admin/members                                   admin: invite form + pending list (Slice 7, admin role only)
 ```
 
 Meeting URLs use `meeting.id` (uuid) rather than a slug. `meetings` carries no human-readable unique slug today and `meeting_date` is not unique within a board across schedule edits or special meetings; uuid is the only stable key. A future slice can introduce a date-plus-discriminator slug without breaking the existing uuid URLs (additive route).
@@ -651,9 +833,10 @@ The hybrid layout matches the locked product decision: summary at top, chaptered
 
 **Bootstrap and edge cases.**
 
-- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; admin-side seeding (manual SQL at v1, future admin UI as part of B4; semi-automated CSV-to-SQL seed script as Backlog B8) is the sole bootstrap path.
+- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; the invitation-based path established in Slice 7 is the sole provisioning route. Andy bootstraps Aaron's admin membership via a one-shot SQL `INSERT INTO invitations` plus `inviteUserByEmail` script invocation; after that bootstrap, all further invitations flow through the `/{publication.slug}/admin/members` admin UI. Bulk CSV invite remains in Backlog B8.
 - Direct URL access to a `meetings.id` at `status != 'published'`: 404. RLS hides the row from the SSR client; the page renders the standard not-found surface.
 - Direct URL with a publication/town/board slug the user has no membership for: 404 on the same RLS path.
+- Direct URL to `/{publication.slug}/admin/members` by a non-admin authenticated user: 404 via `notFound()` (per the admin-role check in the page's server component; the RLS policy on `invitations` is the defense-in-depth boundary, the explicit check is the contract-level boundary). The 404 is indistinguishable from a route that doesn't exist, which is the intended behavior for surfaces a non-admin should not know about.
 
 **Failure modes.**
 
@@ -752,11 +935,15 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 - **Why:** Cron always populates the field at row creation; nullable column is a vestige of the pre-Slice-2 schema. A NOT NULL constraint catches future code paths that bypass cron (manual inserts, alternative ingestion sources) which would otherwise silently propagate a null through downstream code that assumes a value.
 - **Trigger:** B1 ships and any historical rows are backfilled. The constraint tightening is the contract step in an expand/contract cycle; B1 is the expand.
 
-## B4 — Operator review gate at `review → published`
+## B4 — Operator review gate at `review → published` + residual admin surfaces
 
-- **What:** Operator review UI surface that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → embedding → published` directly in Stages 6 and 9 with no human gate; no row sits in `review` at v1.
-- **Why:** Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
-- **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught, or (b) the slice that builds an admin/operator UI for any reason picks up the review surface alongside. Whichever fires first.
+- **What:** Two related deferred surfaces bundled under one backlog entry because they share the admin-UI route prefix `/{publication.slug}/admin/...` introduced by Slice 7.
+  - **B4a — Operator review gate.** Operator review UI that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → embedding → published` directly in Stages 6 and 9 with no human gate; no row sits in `review` at v1.
+  - **B4b — Residual member-management surfaces.** Slice 7 shipped only the invite form and the pending-invitations list view under `/{publication.slug}/admin/members`. The remaining admin operations stay deferred: member list view (active memberships with role display), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view of past invitations. Each is a real operational capability but none blocks the demo or the manual QA sweep — Andy can SQL-correct edge cases (typo'd invitations, removals, role corrections) until the residual UI lands.
+- **Why:**
+  - B4a: Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
+  - B4b: The Slice 7 admin surface was narrowly scoped to the operational chokepoint that demo-blocked (Aaron self-serving invites). The residual surfaces are quality-of-life rather than chokepoint-of-flow; deferring them keeps Slice 7 small and ships them when their absence becomes friction rather than as speculative scope.
+- **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught (fires B4a), or (b) the residual admin surfaces become friction operationally — Aaron requests a role-change UI, a member-list view, or revoke-resend tooling (fires B4b), or (c) the slice that builds either surface picks the other up alongside given the shared route prefix. Whichever fires first.
 
 ## B5 — Transcript-aware meeting summarization
 
@@ -778,6 +965,6 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 ## B8 — Config-seed script for tenant boards
 
-- **What:** A one-shot script (`apps/worker/scripts/seed-tenant-config.ts` or equivalent) that reads a CSV (publication / town / board / YouTube channel ID / title pattern / min duration / ingest_since_days / membership emails) and runs the corresponding INSERTs into `publications`, `towns`, `boards`, `memberships`. Idempotent (`ON CONFLICT ... DO NOTHING` or matching upsert per row). The KB inventories at `kb_knox-county-municipal-video`, `kb_waldo-county-municipal-video`, and the `kb_meeting-cadence-*` files are the source data for the CSV's initial population.
-- **Why:** v1 ships with one board (Lincolnville Select Board) configured via hand-written SQL — fine at single-board scale. As coverage expands toward full Midcoast Villager geography (Knox County 18 municipalities + Waldo County 26 municipalities + Hancock County + MDI = roughly 20–30 candidate boards with verified video presence per the KB inventories), hand-rolling INSERTs becomes the friction the build was meant to avoid. Per the local-govt-meeting-apis KB synthesis, no third-party API serves the target Maine geographies (GatherGov, Council Data Project, Legistar, and CivicBand all received FAILS-TO-SERVE verdicts) — the only feasible automation is a seed script reading the KB's already-completed research as a CSV.
+- **What:** A one-shot script (`apps/worker/scripts/seed-tenant-config.ts` or equivalent) that reads a CSV (publication / town / board / YouTube channel ID / title pattern / min duration / ingest_since_days / membership emails with roles) and runs the corresponding INSERTs into `publications`, `towns`, `boards`, and (post-Slice-7) `invitations` plus a batched call to `inviteUserByEmail` for each invited member. Idempotent (`ON CONFLICT ... DO NOTHING` or matching upsert per row; the partial unique index on `invitations` handles the invite-side idempotency natively). The KB inventories at `kb_knox-county-municipal-video`, `kb_waldo-county-municipal-video`, and the `kb_meeting-cadence-*` files are the source data for the CSV's initial population.
+- **Why:** v1 ships with one board (Lincolnville Select Board) configured via hand-written SQL — fine at single-board scale. As coverage expands toward full Midcoast Villager geography (Knox County 18 municipalities + Waldo County 26 municipalities + Hancock County + MDI = roughly 20–30 candidate boards with verified video presence per the KB inventories), hand-rolling INSERTs becomes the friction the build was meant to avoid. Per the local-govt-meeting-apis KB synthesis, no third-party API serves the target Maine geographies (GatherGov, Council Data Project, Legistar, and CivicBand all received FAILS-TO-SERVE verdicts) — the only feasible automation is a seed script reading the KB's already-completed research as a CSV. The membership-side of the script writes through `invitations` (the Slice 7 path) rather than direct `memberships` inserts, so seeded users go through the trigger-driven resolution flow like every other invited user.
 - **Trigger:** A second board or a second publication is provisioned. At that point the CSV-to-SQL workflow is more efficient than additional hand-INSERTs. Until then, hand-rolling matches the actual volume.

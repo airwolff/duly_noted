@@ -25,15 +25,41 @@ Next.js / Cloudflare Pages surface.
   slugs are additive, not replacements.
 - Auth routes (`/login`, `/auth/callback`) and Next.js asset paths are
   the only routes outside the auth gate. The middleware enforces this.
+- Admin routes live under `/{publication.slug}/admin/*`. They require
+  both an authenticated session (enforced by middleware) and an admin
+  role membership for the requested publication (enforced by the page's
+  server component; see §3). At Slice 7, only `/{publication.slug}/admin/members`
+  ships. Other admin surfaces stay in Backlog B4.
 
 ## 3. Auth gate
 
 - `apps/web/middleware.ts` refreshes the Supabase session cookie on every
   non-asset request and redirects unauthenticated requests to `/login`
   with the requested URL preserved as a `redirectTo` param.
+- Middleware additionally calls `resolve_pending_invitations()` on
+  session establishment (Slice 7+). The RPC is idempotent and no-ops
+  for users with no matching open invitations; the call adds one
+  round-trip on session-cookie-refresh transitions and is acceptable at
+  v1 volume.
 - Do not duplicate the auth check inside individual pages or layouts.
   The middleware is the single gate; pages assume an authenticated
   session.
+- Pages or server actions that mutate publication-level state
+  (invitations, member roles, settings, operator review) must
+  additionally verify `admin` role membership against the requested
+  publication before any side effect. The check is a server-side
+  `SELECT 1 FROM memberships WHERE user_id = auth.uid() AND
+publication_id = $? AND role = 'admin'`. RLS on the underlying
+  tables is defense-in-depth; the explicit role check is the
+  contract-level boundary. Non-admin authenticated users navigating
+  to admin routes receive `notFound()` — the route surfaces as 404,
+  indistinguishable from a route that doesn't exist.
+- Server actions in `apps/web` do not call Supabase admin APIs
+  (`auth.admin.inviteUserByEmail`, `auth.admin.createUser`, etc.) directly.
+  They POST to a Supabase Edge Function with the user's JWT and let
+  the Edge Function call the privileged API. The web app does not
+  hold `SUPABASE_SERVICE_ROLE_KEY`; the boundary is locked in
+  root `CLAUDE.md` §6.
 - An authenticated session is not a sufficient authorization signal for
   any specific resource — RLS is the access boundary. Pages query and
   let the database return rows or not. A 404 from an RLS-hidden row is
@@ -73,7 +99,10 @@ Next.js / Cloudflare Pages surface.
 
 - Public (unauthenticated) reader surface. Locked decision; do not build.
 - Search UI. Slice 6.
-- Admin UI for membership management or operator review. Backlog B4
-  and future slices.
+- Admin UI for member list view, role changes, member removal,
+  revoke/resend invitations, audit log of past invitations, operator
+  review. The Slice 7 admin surface ships only an invite form and a
+  pending-invitations list view under `/{publication.slug}/admin/members`;
+  other admin operations stay in Backlog B4.
 - Client-side state management libraries (Redux, Zustand). React state
   and URL state are sufficient at the v1 page surface.

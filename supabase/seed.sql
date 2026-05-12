@@ -45,3 +45,20 @@ select b.id, 'vWsJcTssN9s', 'pending', 'Lincolnville Select Board Meeting'
    and t.slug = 'lincolnville'
    and p.slug = 'midcoast-villager'
 on conflict (youtube_id) do nothing;
+
+-- TEST-ONLY helper for packages/db/src/invitations.test.ts: lets the
+-- trigger-wrapper test temporarily replace handle_new_auth_user with a
+-- force-throwing version to verify the EXCEPTION WHEN OTHERS wrapper
+-- keeps signup signup-safe. Lives in seed.sql (NOT migrations) so it
+-- never reaches the cloud project. Granted only to service_role.
+create or replace function public.exec_sql_unsafe(sql text) returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  execute sql;
+end;
+$$;
+revoke all on function public.exec_sql_unsafe(text) from public;
+grant execute on function public.exec_sql_unsafe(text) to service_role;

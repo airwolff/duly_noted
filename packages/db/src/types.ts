@@ -204,6 +204,42 @@ export interface Database {
         };
         Relationships: [];
       };
+      invitations: {
+        Row: {
+          id: string;
+          email: string;
+          publication_id: string;
+          role: 'reader' | 'editor' | 'admin';
+          invited_by_user_id: string | null;
+          created_at: string;
+          expires_at: string;
+          accepted_at: string | null;
+          revoked_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          email: string;
+          publication_id: string;
+          role: 'reader' | 'editor' | 'admin';
+          invited_by_user_id?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          email?: string;
+          publication_id?: string;
+          role?: 'reader' | 'editor' | 'admin';
+          invited_by_user_id?: string | null;
+          created_at?: string;
+          expires_at?: string;
+          accepted_at?: string | null;
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
       segments: {
         Row: {
           id: string;
@@ -335,6 +371,14 @@ export interface Database {
           start_time_seconds: number;
           rrf_score: number;
         }[];
+      };
+      resolve_pending_invitations: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
+      check_invite_conflicts: {
+        Args: { p_email: string; p_publication_id: string };
+        Returns: 'already_member' | 'invitation_pending' | 'ok';
       };
     };
     Enums: {
