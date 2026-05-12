@@ -239,7 +239,7 @@ worker's service_role path (which does not touch memberships at v1).
 - **Scale forces tenant-list-in-JWT for performance.** If a future
   scale point (10K+ users per publication, or many publications per
   user) makes the per-request `IN (SELECT publication_id FROM
-  memberships WHERE user_id = auth.uid())` subquery costly, migrating
+memberships WHERE user_id = auth.uid())` subquery costly, migrating
   the membership lookup to a Custom Access Token Hook claim becomes
   the path. The JWT-freshness tradeoff would then need a parallel
   decision about membership-change propagation. Not anticipated at

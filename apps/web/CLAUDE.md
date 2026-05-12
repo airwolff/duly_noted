@@ -49,7 +49,7 @@ Next.js / Cloudflare Pages surface.
   additionally verify `admin` role membership against the requested
   publication before any side effect. The check is a server-side
   `SELECT 1 FROM memberships WHERE user_id = auth.uid() AND
-  publication_id = $? AND role = 'admin'`. RLS on the underlying
+publication_id = $? AND role = 'admin'`. RLS on the underlying
   tables is defense-in-depth; the explicit role check is the
   contract-level boundary. Non-admin authenticated users navigating
   to admin routes receive `notFound()` — the route surfaces as 404,
