@@ -27,7 +27,18 @@ export async function middleware(request: NextRequest) {
   });
 
   const { data } = await supabase.auth.getUser();
-  if (data.user) return response;
+  if (data.user) {
+    // Slice 7: defense-in-depth for the case where the user already
+    // existed in auth.users when an admin invited them (no INSERT
+    // event for the trigger to fire on). Idempotent; no-op for users
+    // with no open invitations. Logged but never blocks the request —
+    // same posture as the trigger's RAISE WARNING wrapper.
+    const { error: resolveError } = await supabase.rpc('resolve_pending_invitations');
+    if (resolveError) {
+      console.warn('middleware: resolve_pending_invitations failed', resolveError);
+    }
+    return response;
+  }
   if (isPublic(request.nextUrl.pathname)) return response;
 
   const loginUrl = new URL('/login', request.url);
