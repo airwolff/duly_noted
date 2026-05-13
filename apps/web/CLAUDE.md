@@ -73,6 +73,17 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
   for any future admin mutation. After a successful mutation, call
   `useRouter().refresh()` from `next/navigation` to re-render the
   parent server component and pick up the new DB state.
+- Supabase Edge Functions called directly from the browser must handle
+  the CORS preflight `OPTIONS` request and return `Access-Control-Allow-*`
+  headers on every response (success and error paths). Edge Functions
+  called only from server-side contexts (SSR fetches via
+  `supabase.functions.invoke` from a server component, or vendor
+  webhooks) do not need CORS handling. Be explicit about which surface
+  calls each function and document it in the function's header comment
+  — `supabase/functions/invite-user/index.ts` is the reference for the
+  browser-called pattern; `supabase/functions/search/index.ts` and
+  `supabase/functions/asr-webhook/index.ts` are the reference for the
+  server-only and webhook patterns respectively.
 - An authenticated session is not a sufficient authorization signal for
   any specific resource — RLS is the access boundary. Pages query and
   let the database return rows or not. A 404 from an RLS-hidden row is

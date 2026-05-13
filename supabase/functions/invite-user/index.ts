@@ -1,6 +1,11 @@
 // Supabase Edge Function: admin-only invite-user.
 // Runs at: ${SUPABASE_URL}/functions/v1/invite-user
 //
+// Called directly from the browser by the admin invite form
+// (apps/web/src/app/[publication]/admin/members/invite-form.tsx),
+// so this function handles the CORS preflight OPTIONS request and
+// includes Access-Control-Allow-* headers on every response.
+//
 // JWT verification is performed at the gateway (verify_jwt = true is
 // declared in supabase/config.toml; explicit for the user-facing
 // admin contract). The caller's JWT is forwarded to a user-scoped
@@ -37,14 +42,23 @@ const requestSchema = z.object({
   publication_id: z.string().uuid(),
 });
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
+
 function jsonResponse(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
 Deno.serve(async (request) => {
+  if (request.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
   if (request.method !== 'POST') {
     return jsonResponse({ error: 'method_not_allowed' }, 405);
   }
