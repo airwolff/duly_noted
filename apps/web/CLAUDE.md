@@ -54,12 +54,25 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
   contract-level boundary. Non-admin authenticated users navigating
   to admin routes receive `notFound()` — the route surfaces as 404,
   indistinguishable from a route that doesn't exist.
-- Server actions in `apps/web` do not call Supabase admin APIs
-  (`auth.admin.inviteUserByEmail`, `auth.admin.createUser`, etc.) directly.
-  They POST to a Supabase Edge Function with the user's JWT and let
-  the Edge Function call the privileged API. The web app does not
-  hold `SUPABASE_SERVICE_ROLE_KEY`; the boundary is locked in
-  root `CLAUDE.md` §6.
+- Client components in `apps/web` post directly to Supabase Edge
+  Functions for mutating admin operations, attaching the JWT from
+  `supabase.auth.getSession()` (via `createBrowserClient`) in the
+  `Authorization: Bearer ...` header. The Edge Function calls the
+  privileged Supabase admin API (`auth.admin.inviteUserByEmail`,
+  `auth.admin.createUser`, etc.). The web app does not hold
+  `SUPABASE_SERVICE_ROLE_KEY`; the boundary is locked in root
+  `CLAUDE.md` §6.
+- Do not use Next.js Server Actions for cross-surface mutating calls.
+  The `@cloudflare/next-on-pages` adapter does not reliably bundle
+  Server Action POST handlers — Slice 7 smoke testing surfaced a 404
+  from Cloudflare Pages (`x-matched-path: /404`) on the Server Action
+  POST for the invite form, with no request ever reaching the Edge
+  Function. The Slice 7 invite form was rewritten as a client
+  component that fetches the `invite-user` Edge Function directly;
+  use that pattern (`apps/web/src/app/[publication]/admin/members/invite-form.tsx`)
+  for any future admin mutation. After a successful mutation, call
+  `useRouter().refresh()` from `next/navigation` to re-render the
+  parent server component and pick up the new DB state.
 - An authenticated session is not a sufficient authorization signal for
   any specific resource — RLS is the access boundary. Pages query and
   let the database return rows or not. A 404 from an RLS-hidden row is
