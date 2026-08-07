@@ -20,6 +20,15 @@ async function main(): Promise<void> {
   }
   console.log('db reachable');
 
+  if (env.YT_DLP_PROXY_URL) {
+    console.log('yt-dlp egress: residential proxy configured (ADR 0019)');
+  } else {
+    console.warn(
+      'yt-dlp egress: YT_DLP_PROXY_URL is unset — extraction runs direct. ' +
+        'From a datacenter IP YouTube answers 429 + bot-check and every meeting fails (ADR 0019).',
+    );
+  }
+
   const callStructured = createAnthropicCaller(env.ANTHROPIC_API_KEY);
   const embed = createOpenAIEmbedder(env.OPENAI_API_KEY);
 
@@ -30,6 +39,7 @@ async function main(): Promise<void> {
     asrWebhookSecret: env.ASR_WEBHOOK_SECRET,
     callStructured,
     embed,
+    ytDlpProxyUrl: env.YT_DLP_PROXY_URL,
   });
 
   const shutdown = (signal: NodeJS.Signals): void => {

@@ -50,6 +50,10 @@ envVarGroups:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      # ADR 0019 residential proxy for yt-dlp egress. Worker-only: the cron
+      # talks to the YouTube Data API (not blocked) and needs no proxy.
+      - key: YT_DLP_PROXY_URL
+        sync: false
   - name: duly-noted-cron
     envVars:
       - key: YOUTUBE_API_KEY
