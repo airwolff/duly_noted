@@ -223,7 +223,9 @@ describe('runSummarizationOnce', () => {
       segments: baseSegments,
     });
     const tooShort = 'too short';
-    const callStructured: CallStructured = vi.fn().mockResolvedValueOnce({ summary: tooShort });
+    // Both attempts violate the bound: the correction retry gets one more shot
+    // and the meeting fails only after it too comes back out of range.
+    const callStructured: CallStructured = vi.fn().mockResolvedValue({ summary: tooShort });
 
     const outcome = await runSummarizationOnce({ supabase: client, callStructured });
 
@@ -231,13 +233,38 @@ describe('runSummarizationOnce', () => {
     if (outcome.kind === 'failed') {
       expect(outcome.message).toBe(`summary length ${tooShort.length} out of bounds [200, 2000]`);
     }
-    expect(callStructured).toHaveBeenCalledTimes(1);
+    expect(callStructured).toHaveBeenCalledTimes(2);
     expect(rpcCalls.some((c) => c.fn === 'complete_summarization')).toBe(false);
     const failPatch = updateCalls.find((c) => c.patch.status === 'failed');
     expect(failPatch).toBeDefined();
     expect(failPatch!.patch.last_error).toBe(
       `summary length ${tooShort.length} out of bounds [200, 2000]`,
     );
+  });
+
+  it('recovers when the correction retry lands inside the bound', async () => {
+    // Reproduces the production failure: three of the first three meetings died
+    // at 2075/2268 chars against a 2000 cap, after the ASR spend was committed.
+    const { client, rpcCalls, updateCalls } = makeStubClient({
+      claimRow: baseClaim,
+      boardLookup: baseBoard,
+      segments: baseSegments,
+    });
+    const overLong = 'x'.repeat(2075);
+    const inBounds = 'y'.repeat(1800);
+    const callStructured: CallStructured = vi
+      .fn()
+      .mockResolvedValueOnce({ summary: overLong })
+      .mockResolvedValueOnce({ summary: inBounds });
+
+    const outcome = await runSummarizationOnce({ supabase: client, callStructured });
+
+    expect(outcome.kind).toBe('summarized');
+    expect(callStructured).toHaveBeenCalledTimes(2);
+    const complete = rpcCalls.find((c) => c.fn === 'complete_summarization');
+    expect(complete).toBeDefined();
+    expect(complete!.args.p_summary).toBe(inBounds);
+    expect(updateCalls.some((c) => c.patch.status === 'failed')).toBe(false);
   });
 
   it('marks failed when the LLM call throws (post-retry exhaustion)', async () => {
