@@ -1,5 +1,5 @@
 import type { MarkerType } from '../segmentation/index.js';
-import { SUMMARY_TARGET_MAX_CHARS, SUMMARY_TARGET_MIN_CHARS } from './constants.js';
+import { SUMMARY_TARGET_MAX_WORDS, SUMMARY_TARGET_MIN_WORDS } from './constants.js';
 
 /**
  * Slice 4 summarization prompts. The system prompt enforces the Oberoi
@@ -24,7 +24,7 @@ When referring to people: use only names that appear verbatim in a segment's tra
 
 Be specific. Do not editorialize. Quote directly from a segment's transcript_excerpt or description when material is contested or unclear. Do not infer outcomes (passed, failed, approved, rejected) that are not stated in the segments.
 
-Return a single prose summary in the \`summary\` field of the structured output. Aim for ${SUMMARY_TARGET_MIN_CHARS}–${SUMMARY_TARGET_MAX_CHARS} characters. Prefer the shorter end: cut background and restatement before cutting substance.
+Return a single prose summary in the \`summary\` field of the structured output. Aim for ${SUMMARY_TARGET_MIN_WORDS}–${SUMMARY_TARGET_MAX_WORDS} words. Prefer the shorter end: cut background and restatement before cutting substance.
 
 Structure it as two to three paragraphs separated by a blank line, so it reads as prose rather than one block:
 - First paragraph: what the meeting was and the headline outcome — the thing a reader skimming one paragraph needs.

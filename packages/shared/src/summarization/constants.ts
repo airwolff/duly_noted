@@ -1,26 +1,26 @@
 /**
  * Length bounds for the meeting summary.
  *
- * Two different numbers on purpose. The TARGET pair is what the prompt asks
- * for; the MIN/MAX pair is what Zod enforces. They were the same number until
- * production showed why that fails: Anthropic does not honor minLength /
- * maxLength (see SPEC §Stage 6 "Hallucination guardrails" #3), the model aims
- * at whatever number the prompt states, and it overshoots. The first four real
- * summaries came in at 2075, 2268, 2315, and 2352 chars against a stated and
- * enforced 2000 — every one of them a failed meeting, and the last of those
- * had already been through a correction retry. A model cannot count its own
- * characters; it can only aim.
+ * The prompt asks in WORDS and Zod enforces in CHARACTERS, on purpose.
  *
- * So the prompt now asks for 1200–1800 and Zod allows up to 2500. The ~700
- * chars of slack absorb the observed 4–18% overshoot. All four production
- * summaries above would have passed. The retry in the worker stays as the
- * backstop for the tail.
+ * History, because this has been wrong twice. First the prompt and the Zod
+ * bound were the same number (2000) and every overshoot killed a meeting:
+ * 2075, 2268, 2315, 2352. Then the prompt asked for 1200–1800 characters
+ * against a 2500 bound, and the next summary came back at 2646 — longer than
+ * before, despite a lower target. A model cannot count its own characters, so
+ * a character target is not an instruction it can follow; output length tracks
+ * how much meeting there is to describe.
  *
- * 200 chars remains a defensible floor (~1–2 sentences of substance). 2500 is
- * a ceiling that should rarely be approached, not a size to fill: the meeting
- * page renders the summary as one unclamped paragraph.
+ * Words are a unit the model approximates well. 220–280 words is roughly
+ * 1300–1700 characters, and 3000 characters of enforcement clears the observed
+ * 2646 with real margin. If a very long meeting ever exceeds 3000, the row
+ * fails loudly and gets re-run rather than being silently truncated —
+ * shortening published journalism without a human in the loop is worse than a
+ * visible failure.
+ *
+ * 200 chars remains the floor (~1–2 sentences of substance).
  */
 export const SUMMARY_MIN_CHARS = 200;
-export const SUMMARY_MAX_CHARS = 2500;
-export const SUMMARY_TARGET_MIN_CHARS = 1200;
-export const SUMMARY_TARGET_MAX_CHARS = 1800;
+export const SUMMARY_MAX_CHARS = 3000;
+export const SUMMARY_TARGET_MIN_WORDS = 220;
+export const SUMMARY_TARGET_MAX_WORDS = 280;

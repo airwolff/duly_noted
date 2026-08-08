@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   SUMMARY_MAX_CHARS,
   SUMMARY_MIN_CHARS,
-  SUMMARY_TARGET_MAX_CHARS,
-  SUMMARY_TARGET_MIN_CHARS,
+  SUMMARY_TARGET_MAX_WORDS,
+  SUMMARY_TARGET_MIN_WORDS,
 } from './constants.js';
 import {
   buildSummaryUserPrompt,
@@ -52,12 +52,20 @@ describe('SUMMARIZATION_SYSTEM_PROMPT', () => {
     );
   });
 
+  it('asks in words, a unit the model can approximate, not characters', () => {
+    // A character target is not an instruction a model can follow: asking for
+    // 1200-1800 chars produced 2646. Words track much better.
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(
+      `${SUMMARY_TARGET_MIN_WORDS}–${SUMMARY_TARGET_MAX_WORDS} words`,
+    );
+    expect(SUMMARIZATION_SYSTEM_PROMPT).not.toContain('characters');
+  });
+
   it('states the target range, not the enforced ceiling', () => {
     // The prompt must aim below the Zod bound. Stating the ceiling is what
     // produced 2075/2268/2315/2352-char summaries against a 2000 cap in
     // production — the model aims at whatever number it is given.
-    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_TARGET_MIN_CHARS));
-    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_TARGET_MAX_CHARS));
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_TARGET_MIN_WORDS));
     expect(SUMMARIZATION_SYSTEM_PROMPT).not.toContain(String(SUMMARY_MAX_CHARS));
   });
 
@@ -68,10 +76,12 @@ describe('SUMMARIZATION_SYSTEM_PROMPT', () => {
     expect(SUMMARIZATION_SYSTEM_PROMPT).toContain('No markdown');
   });
 
-  it('keeps a comfortable margin between the prompt target and the Zod ceiling', () => {
-    // The margin is the whole mechanism: it absorbs the model's overshoot.
-    expect(SUMMARY_MAX_CHARS - SUMMARY_TARGET_MAX_CHARS).toBeGreaterThanOrEqual(500);
-    expect(SUMMARY_TARGET_MIN_CHARS).toBeGreaterThan(SUMMARY_MIN_CHARS);
+  it('keeps a comfortable margin between the word target and the char ceiling', () => {
+    // ~6 chars per word including spaces. The ceiling must clear the top of
+    // the target range with room for the overshoot the model reliably adds.
+    const targetMaxChars = SUMMARY_TARGET_MAX_WORDS * 6;
+    expect(SUMMARY_MAX_CHARS - targetMaxChars).toBeGreaterThanOrEqual(1000);
+    expect(SUMMARY_TARGET_MIN_WORDS * 6).toBeGreaterThan(SUMMARY_MIN_CHARS);
   });
 
   it('forbids editorializing and inferring outcomes', () => {
