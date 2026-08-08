@@ -20,6 +20,7 @@ async function main(): Promise<void> {
 
   const startedAt = new Date().toISOString();
   let totalInserted = 0;
+  let totalRefreshed = 0;
   let totalPromoted = 0;
   let exitCode = 0;
 
@@ -39,9 +40,10 @@ async function main(): Promise<void> {
         continue;
       }
       totalInserted += outcome.inserted;
+      totalRefreshed += outcome.refreshed;
       totalPromoted += outcome.promoted;
       console.log(
-        `cron board=${board.id} inserted=${outcome.inserted} promoted=${outcome.promoted}`,
+        `cron board=${board.id} inserted=${outcome.inserted} refreshed=${outcome.refreshed} promoted=${outcome.promoted}`,
       );
     } catch (err) {
       exitCode = 1;
@@ -51,7 +53,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `cron tick ${startedAt} done boards=${boards?.length ?? 0} inserted=${totalInserted} promoted=${totalPromoted}`,
+    `cron tick ${startedAt} done boards=${boards?.length ?? 0} inserted=${totalInserted} refreshed=${totalRefreshed} promoted=${totalPromoted}`,
   );
   process.exit(exitCode);
 }
