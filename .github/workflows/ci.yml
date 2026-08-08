@@ -38,3 +38,33 @@ jobs:
 
       - name: Format check
         run: pnpm format:check
+
+  # B11: every supabase/functions/<name>/ must carry a matching deploy step in
+  # deploy-functions.yml. Slice 7's invite-user shipped un-deployed to prod
+  # because this was a manual check (CLAUDE.md §6). This job automates it at PR
+  # time, before merge — the un-deployed gap can no longer reach main silently.
+  functions-deploy-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert every Edge Function has a deploy step
+        run: |
+          missing=0
+          for dir in supabase/functions/*/; do
+            [ -d "$dir" ] || continue
+            name="$(basename "$dir")"
+            # Skip Supabase's shared-code convention dirs (leading underscore);
+            # they are imported by functions, not deployed themselves.
+            case "$name" in _*) continue ;; esac
+            # Trailing boundary so 'search' is not satisfied by 'deploy search-v2'.
+            if ! grep -qE "supabase functions deploy ${name}([[:space:]]|\$)" .github/workflows/deploy-functions.yml; then
+              echo "::error::Edge Function '$name' has no deploy step in .github/workflows/deploy-functions.yml (CLAUDE.md §6)"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "Every supabase/functions/<name>/ needs a matching 'supabase functions deploy <name>' line in deploy-functions.yml."
+            exit 1
+          fi
+          echo "All Edge Functions have deploy coverage."
