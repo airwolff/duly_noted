@@ -61,6 +61,13 @@ describe('SUMMARIZATION_SYSTEM_PROMPT', () => {
     expect(SUMMARIZATION_SYSTEM_PROMPT).not.toContain(String(SUMMARY_MAX_CHARS));
   });
 
+  it('asks for blank-line-separated paragraphs, not one block', () => {
+    // The reader splits the stored summary on blank lines; if the prompt stops
+    // asking for them every summary renders as a single wall of text again.
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain('separated by a blank line');
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain('No markdown');
+  });
+
   it('keeps a comfortable margin between the prompt target and the Zod ceiling', () => {
     // The margin is the whole mechanism: it absorbs the model's overshoot.
     expect(SUMMARY_MAX_CHARS - SUMMARY_TARGET_MAX_CHARS).toBeGreaterThanOrEqual(500);

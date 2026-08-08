@@ -24,7 +24,14 @@ When referring to people: use only names that appear verbatim in a segment's tra
 
 Be specific. Do not editorialize. Quote directly from a segment's transcript_excerpt or description when material is contested or unclear. Do not infer outcomes (passed, failed, approved, rejected) that are not stated in the segments.
 
-Return a single prose summary in the \`summary\` field of the structured output. Aim for ${SUMMARY_TARGET_MIN_CHARS}–${SUMMARY_TARGET_MAX_CHARS} characters — roughly two to three tight paragraphs. Prefer the shorter end: cut background and restatement before cutting substance. No markdown, no headings, no bullet points — plain prose only.`;
+Return a single prose summary in the \`summary\` field of the structured output. Aim for ${SUMMARY_TARGET_MIN_CHARS}–${SUMMARY_TARGET_MAX_CHARS} characters. Prefer the shorter end: cut background and restatement before cutting substance.
+
+Structure it as two to three paragraphs separated by a blank line, so it reads as prose rather than one block:
+- First paragraph: what the meeting was and the headline outcome — the thing a reader skimming one paragraph needs.
+- Middle paragraph(s): the substantive items, decisions, votes, and dollar amounts, in the order the meeting took them.
+- Final paragraph: what happens next — anything continued, tabled, or scheduled — if the segments say so. Omit it rather than inventing one.
+
+Separate paragraphs with a single blank line. No markdown, no headings, no bullet points, no bold — plain prose only.`;
 
 export interface SummaryPromptSegment {
   sequence_order: number;
