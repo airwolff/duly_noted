@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  DESCRIPTION_MAX_LEN,
+  DESCRIPTION_TARGET_MAX_LEN,
   TITLE_MAX_LEN,
+  TITLE_TARGET_MAX_LEN,
   step1OutputSchema,
   step2OutputSchema,
   step3OutputSchema,
 } from './schemas.js';
+import { STEP_3_SYSTEM_PROMPT } from './prompts.js';
 
 describe('step1OutputSchema', () => {
   it('accepts a valid marker list', () => {
@@ -82,5 +86,20 @@ describe('step3OutputSchema', () => {
 
   it('rejects empty description', () => {
     expect(() => step3OutputSchema.parse({ title: 'fine', description: '' })).toThrow();
+  });
+});
+
+describe('step 3 prompt targets vs enforced bounds', () => {
+  it('keeps the asked-for length below the enforced length', () => {
+    // A description came back at 506 against a stated and enforced 500 and
+    // failed its meeting. The prompt must aim lower than Zod allows.
+    expect(TITLE_TARGET_MAX_LEN).toBeLessThan(TITLE_MAX_LEN);
+    expect(DESCRIPTION_TARGET_MAX_LEN).toBeLessThan(DESCRIPTION_MAX_LEN);
+    expect(DESCRIPTION_MAX_LEN - DESCRIPTION_TARGET_MAX_LEN).toBeGreaterThanOrEqual(100);
+  });
+
+  it('states the target, not the ceiling, in the step 3 prompt', () => {
+    expect(STEP_3_SYSTEM_PROMPT).toContain(String(DESCRIPTION_TARGET_MAX_LEN));
+    expect(STEP_3_SYSTEM_PROMPT).not.toContain(String(DESCRIPTION_MAX_LEN));
   });
 });

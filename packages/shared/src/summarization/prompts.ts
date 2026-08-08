@@ -1,5 +1,5 @@
 import type { MarkerType } from '../segmentation/index.js';
-import { SUMMARY_MAX_CHARS, SUMMARY_MIN_CHARS } from './constants.js';
+import { SUMMARY_TARGET_MAX_CHARS, SUMMARY_TARGET_MIN_CHARS } from './constants.js';
 
 /**
  * Slice 4 summarization prompts. The system prompt enforces the Oberoi
@@ -24,7 +24,7 @@ When referring to people: use only names that appear verbatim in a segment's tra
 
 Be specific. Do not editorialize. Quote directly from a segment's transcript_excerpt or description when material is contested or unclear. Do not infer outcomes (passed, failed, approved, rejected) that are not stated in the segments.
 
-Return a single prose summary in the \`summary\` field of the structured output. The summary must be between ${SUMMARY_MIN_CHARS} and ${SUMMARY_MAX_CHARS} characters. No markdown, no headings, no bullet points — plain prose only.`;
+Return a single prose summary in the \`summary\` field of the structured output. Aim for ${SUMMARY_TARGET_MIN_CHARS}–${SUMMARY_TARGET_MAX_CHARS} characters — roughly two to three tight paragraphs. Prefer the shorter end: cut background and restatement before cutting substance. No markdown, no headings, no bullet points — plain prose only.`;
 
 export interface SummaryPromptSegment {
   sequence_order: number;
