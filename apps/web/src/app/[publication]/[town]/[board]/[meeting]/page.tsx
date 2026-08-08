@@ -9,7 +9,30 @@ import type { Database } from '@duly-noted/db';
 
 type MeetingRow = Database['public']['Tables']['meetings']['Row'];
 type SegmentRow = Database['public']['Tables']['segments']['Row'];
-type MeetingWithSegments = MeetingRow & { segments: SegmentRow[] };
+
+// Columns the reader actually renders. Selecting them explicitly rather than
+// `*` keeps two things out of the response: segments.embedding, a 1536-float
+// vector per segment that no reader surface uses, and the meetings columns
+// (audio_url, asr_transcript_id, transcript_url, last_error) that anon has no
+// grant on under the public_read policies.
+const MEETING_COLUMNS =
+  'id, board_id, status, title, meeting_date, summary, duration_seconds, youtube_id';
+const SEGMENT_COLUMNS =
+  'id, meeting_id, sequence_order, marker_type, title, description, start_time_seconds, end_time_seconds, transcript_excerpt';
+
+type MeetingWithSegments = Pick<
+  MeetingRow,
+  | 'id'
+  | 'board_id'
+  | 'status'
+  | 'title'
+  | 'meeting_date'
+  | 'summary'
+  | 'duration_seconds'
+  | 'youtube_id'
+> & {
+  segments: SegmentRow[];
+};
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
@@ -26,7 +49,7 @@ export default async function MeetingPage({
 
   const { data } = await supabase
     .from('meetings')
-    .select('*, segments(*)')
+    .select(`${MEETING_COLUMNS}, segments(${SEGMENT_COLUMNS})`)
     .eq('id', meetingId)
     .eq('board_id', chain.board.id)
     .eq('status', 'published')

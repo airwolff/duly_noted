@@ -23,8 +23,11 @@ Next.js / Cloudflare Pages surface.
   publication slug is the first dynamic segment of every reader URL.
 - Meeting routes use `meeting.id` (uuid), not a slug. Future date-based
   slugs are additive, not replacements.
-- Auth routes (`/login`, `/auth/callback`) and Next.js asset paths are
-  the only routes outside the auth gate. The middleware enforces this.
+- Reader routes are readable without a session when the publication has
+  `public_read = true` (ADR 0024); RLS is what decides, not the
+  middleware. Auth routes (`/login`, `/auth/callback`) and Next.js asset
+  paths sit outside the gate as well. Admin routes are the surface the
+  middleware actually gates.
 - Admin routes live under `/{publication.slug}/admin/*`. They require
   both an authenticated session (enforced by middleware) and an admin
   role membership for the requested publication (enforced by the page's
@@ -34,16 +37,20 @@ Next.js / Cloudflare Pages surface.
 ## 3. Auth gate
 
 - `apps/web/middleware.ts` refreshes the Supabase session cookie on every
-  non-asset request and redirects unauthenticated requests to `/login`
-  with the requested URL preserved as a `redirectTo` param.
+  non-asset request. It redirects unauthenticated requests to `/login`
+  (preserving the requested URL as a `redirectTo` param) for **admin
+  routes only**. Reader routes fall through unauthenticated and are
+  scoped by RLS: a member sees their publication, an anonymous visitor
+  sees publications flagged `public_read` and nothing else (ADR 0024).
 - Middleware additionally calls `resolve_pending_invitations()` on
   session establishment (Slice 7+). The RPC is idempotent and no-ops
   for users with no matching open invitations; the call adds one
   round-trip on session-cookie-refresh transitions and is acceptable at
   v1 volume.
 - Do not duplicate the auth check inside individual pages or layouts.
-  The middleware is the single gate; pages assume an authenticated
-  session.
+  The middleware is the single gate for admin routes. Reader pages must
+  not assume an authenticated session — they query and render whatever
+  RLS returns, which may be the anonymous view.
 - Pages or server actions that mutate publication-level state
   (invitations, member roles, settings, operator review) must
   additionally verify `admin` role membership against the requested
@@ -92,8 +99,11 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
 ## 4. Data fetching
 
 - One server-component query per logical page concern. Use Supabase's
-  related-table syntax (`select=*, segments(*)`) to fetch a meeting and
-  its segments in one round trip rather than two.
+  related-table syntax to fetch a meeting and its segments in one round
+  trip rather than two — but name the columns rather than using `*`.
+  `select('*, segments(*)')` shipped every segment's 1536-float
+  `embedding` to the browser, and `*` breaks outright under the
+  column-scoped anon grants from ADR 0024.
 - No client-side data fetching for the initial page render. Hydration
   receives data from the server component; client components handle
   post-render interactivity only.
@@ -121,7 +131,10 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
 
 ## 7. Out of scope at v1
 
-- Public (unauthenticated) reader surface. Locked decision; do not build.
+<!-- The public reader surface was listed here as a locked "do not build"
+     until 2026-08-08. ADR 0024 reverses that with a per-publication
+     opt-in flag defaulting to false. -->
+
 - Search UI. Slice 6.
 - Admin UI for member list view, role changes, member removal,
   revoke/resend invitations, audit log of past invitations, operator
