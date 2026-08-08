@@ -22,6 +22,7 @@ import {
 } from '@duly-noted/shared';
 import type { CallStructured } from './anthropic.js';
 import { markFailed } from './fail.js';
+import { LengthBoundsError, parseWithLengthRetry } from './length-retry.js';
 
 /**
  * Slice 3 segmentation orchestrator. Picks up a meeting parked at
@@ -127,7 +128,7 @@ function parseStep3WithLengthDetail(raw: unknown): { title: string; description:
             typeof (raw as Record<string, unknown>)[field] === 'string'
               ? (raw as Record<string, string>)[field]!.length
               : 'unknown';
-          throw new Error(`${field} length ${actualLen} out of bounds [1, ${max}]`);
+          throw new LengthBoundsError(`${field} length ${actualLen} out of bounds [1, ${max}]`);
         }
       }
     }
@@ -262,13 +263,17 @@ async function generateTitlesAndDescriptions(
     const endIdx = tIndex(endToken);
     const chapterText = lines.slice(startIdx, endIdx + 1).join('\n');
     const userPrompt = `marker_type: ${marker.marker_type}\n\nChapter text:\n${chapterText}`;
-    const raw = await callStructured({
-      systemPrompt: STEP_3_SYSTEM_PROMPT,
-      userPrompt,
-      jsonSchema: step3JsonSchema,
-      maxTokens: 1024,
-    });
-    const parsed = parseStep3WithLengthDetail(raw);
+    const parsed = await parseWithLengthRetry(
+      (correctionNote) =>
+        callStructured({
+          systemPrompt: STEP_3_SYSTEM_PROMPT,
+          userPrompt: userPrompt + correctionNote,
+          jsonSchema: step3JsonSchema,
+          maxTokens: 1024,
+        }),
+      parseStep3WithLengthDetail,
+      `step3 meeting_id=${meetingId} sequence_order=${i}`,
+    );
 
     const startUtt = utterances[startIdx];
     const endUtt = utterances[endIdx];

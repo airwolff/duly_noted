@@ -12,6 +12,7 @@ import {
 } from '@duly-noted/shared';
 import type { CallStructured } from './anthropic.js';
 import { markFailed } from './fail.js';
+import { LengthBoundsError, parseWithLengthRetry } from './length-retry.js';
 
 /**
  * Slice 4 summarization orchestrator. Picks up a meeting parked at
@@ -102,7 +103,7 @@ function parseSummaryWithLengthDetail(raw: unknown): { summary: string } {
           typeof (raw as { summary: unknown }).summary === 'string'
             ? (raw as { summary: string }).summary.length
             : 'unknown';
-        throw new Error(
+        throw new LengthBoundsError(
           `summary length ${actualLen} out of bounds [${SUMMARY_MIN_CHARS}, ${SUMMARY_MAX_CHARS}]`,
         );
       }
@@ -152,13 +153,17 @@ export async function runSummarizationOnce(deps: SummarizeDeps): Promise<Summari
       segments,
     });
 
-    const raw = await deps.callStructured({
-      systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
-      userPrompt,
-      jsonSchema: summaryJsonSchema,
-      maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
-    });
-    const parsed = parseSummaryWithLengthDetail(raw);
+    const parsed = await parseWithLengthRetry(
+      (correctionNote) =>
+        deps.callStructured({
+          systemPrompt: SUMMARIZATION_SYSTEM_PROMPT,
+          userPrompt: userPrompt + correctionNote,
+          jsonSchema: summaryJsonSchema,
+          maxTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+        }),
+      parseSummaryWithLengthDetail,
+      `summary meeting_id=${meeting.id}`,
+    );
 
     const { error: completeErr } = await deps.supabase.rpc('complete_summarization', {
       p_meeting_id: meeting.id,

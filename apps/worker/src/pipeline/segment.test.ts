@@ -195,7 +195,8 @@ describe('runSegmentationOnce', () => {
         markers: [{ marker_type: 'AGENDA_ITEM', start_token: '[T0]' }],
       })
       .mockResolvedValueOnce({ end_token: '[T2]' })
-      .mockResolvedValueOnce({ title: oversizeTitle, description: 'Discussion of the budget.' });
+      // Twice: the correction retry gets one more shot before the row fails.
+      .mockResolvedValue({ title: oversizeTitle, description: 'Discussion of the budget.' });
 
     const outcome = await runSegmentationOnce({ supabase: client, callStructured });
 
