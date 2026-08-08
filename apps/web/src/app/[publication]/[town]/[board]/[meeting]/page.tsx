@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSupabaseServerClient } from '@/lib/supabase-server.js';
+import { splitParagraphs } from '@/lib/split-paragraphs.js';
 import { resolveBoardChain } from '@/lib/resolvers.js';
 import { sortSegments } from '@/lib/sort-segments.js';
 import { SegmentCard } from '@/components/segment-card.js';
@@ -66,7 +67,11 @@ export default async function MeetingPage({
       {meeting.summary && (
         <section className="mt-6 rounded bg-slate-50 p-4">
           <h2 className="text-lg font-semibold">Summary</h2>
-          <p className="mt-2 whitespace-pre-wrap">{meeting.summary}</p>
+          <div className="mt-2 space-y-3">
+            {splitParagraphs(meeting.summary).map((para, i) => (
+              <p key={i}>{para}</p>
+            ))}
+          </div>
         </section>
       )}
       <section className="mt-8 space-y-4">
