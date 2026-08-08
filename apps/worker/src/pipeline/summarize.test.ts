@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@duly-noted/db';
-import { SUMMARY_MIN_CHARS } from '@duly-noted/shared';
+import { SUMMARY_MAX_CHARS, SUMMARY_MIN_CHARS } from '@duly-noted/shared';
 import type { CallStructured } from './anthropic.js';
 import { runSummarizationOnce } from './summarize.js';
 
@@ -231,27 +231,31 @@ describe('runSummarizationOnce', () => {
 
     expect(outcome.kind).toBe('failed');
     if (outcome.kind === 'failed') {
-      expect(outcome.message).toBe(`summary length ${tooShort.length} out of bounds [200, 2000]`);
+      expect(outcome.message).toBe(
+        `summary length ${tooShort.length} out of bounds [${SUMMARY_MIN_CHARS}, ${SUMMARY_MAX_CHARS}]`,
+      );
     }
     expect(callStructured).toHaveBeenCalledTimes(2);
     expect(rpcCalls.some((c) => c.fn === 'complete_summarization')).toBe(false);
     const failPatch = updateCalls.find((c) => c.patch.status === 'failed');
     expect(failPatch).toBeDefined();
     expect(failPatch!.patch.last_error).toBe(
-      `summary length ${tooShort.length} out of bounds [200, 2000]`,
+      `summary length ${tooShort.length} out of bounds [${SUMMARY_MIN_CHARS}, ${SUMMARY_MAX_CHARS}]`,
     );
   });
 
   it('recovers when the correction retry lands inside the bound', async () => {
     // Reproduces the production failure: three of the first three meetings died
-    // at 2075/2268 chars against a 2000 cap, after the ASR spend was committed.
+    // at 2075/2268 chars against the cap of the day, after the ASR spend was
+    // committed. Sized off the constants so a bound change cannot silently
+    // turn this into a test that never exercises the retry.
     const { client, rpcCalls, updateCalls } = makeStubClient({
       claimRow: baseClaim,
       boardLookup: baseBoard,
       segments: baseSegments,
     });
-    const overLong = 'x'.repeat(2075);
-    const inBounds = 'y'.repeat(1800);
+    const overLong = 'x'.repeat(SUMMARY_MAX_CHARS + 75);
+    const inBounds = 'y'.repeat(SUMMARY_MAX_CHARS - 200);
     const callStructured: CallStructured = vi
       .fn()
       .mockResolvedValueOnce({ summary: overLong })
