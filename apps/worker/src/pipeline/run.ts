@@ -30,6 +30,7 @@ export interface RunDeps {
   asrWebhookSecret: string;
   callStructured: CallStructured;
   embed: CallEmbedder;
+  ytDlpProxyUrl?: string;
 }
 
 /**
@@ -75,7 +76,7 @@ async function runPendingOnce(deps: RunDeps): Promise<RunOutcome> {
   try {
     workDir = await mkdtemp(path.join(tmpdir(), 'duly-noted-'));
     const audioPath = path.join(workDir, `${meeting.id}.opus`);
-    await extractAudio(meeting.youtube_id, audioPath);
+    await extractAudio(meeting.youtube_id, audioPath, deps.ytDlpProxyUrl);
 
     const storagePath = await uploadAudio(deps.supabase, meeting.id, audioPath);
     const signedUrl = await signAudioUrl(deps.supabase, storagePath);
