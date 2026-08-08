@@ -7,6 +7,8 @@ export type { Utterance, TTokenInput } from './t-tokens.js';
 export {
   TITLE_MAX_LEN,
   DESCRIPTION_MAX_LEN,
+  TITLE_TARGET_MAX_LEN,
+  DESCRIPTION_TARGET_MAX_LEN,
   step1JsonSchema,
   step1OutputSchema,
   step2JsonSchema,

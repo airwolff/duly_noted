@@ -14,6 +14,18 @@ const T_TOKEN_PATTERN = '^\\[T\\d+\\]$';
 export const TITLE_MAX_LEN = 120;
 export const DESCRIPTION_MAX_LEN = 500;
 
+/**
+ * What the prompt asks for, deliberately below what Zod enforces above. Same
+ * mechanism as the summary bounds (see ../summarization/constants.ts): the
+ * model aims at the figure the prompt names and overshoots it, and Anthropic
+ * honors neither the `maxLength` in the JSON schema below nor the wording in
+ * the prompt. A segment description came back at 506 against a stated and
+ * enforced 500 and failed its meeting. Keeping ~150 chars of slack means an
+ * overshoot lands inside the bound instead of killing the row.
+ */
+export const TITLE_TARGET_MAX_LEN = 90;
+export const DESCRIPTION_TARGET_MAX_LEN = 350;
+
 // --- Step 1: marker extraction --------------------------------------------
 
 export const step1JsonSchema = {

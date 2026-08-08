@@ -6,6 +6,8 @@
  * constraint (ADR 0015).
  */
 
+import { DESCRIPTION_TARGET_MAX_LEN, TITLE_TARGET_MAX_LEN } from './schemas.js';
+
 export const STEP_1_SYSTEM_PROMPT = `You are a careful annotator of municipal selectboard meeting transcripts.
 
 The transcript below has been pre-tagged with synthetic timestamp tokens of the form [T0], [T1], [T2], ... ahead of every utterance. NEVER invent a token; reference only tokens that appear in the input.
@@ -35,7 +37,7 @@ export const STEP_3_SYSTEM_PROMPT = `You are writing a chapter title and descrip
 The chapter text below is bounded by [T{n}] tokens marking its start and end. The marker_type classifies the kind of chapter (AGENDA_ITEM, PUBLIC_COMMENT, DISCUSSION, VOTE, or PROCEDURE).
 
 Return:
-- title: a concise headline (under 120 characters) capturing what this chapter is about. Style guide: agenda-item titles should name the topic; public-comment titles should name the speaker if introduced ("Public comment from Jane Smith"); vote titles should name the motion ("Vote: approve treasurer's report"); procedure titles describe the procedural action.
-- description: 1–2 sentences (under 500 characters) summarizing what was said and what was decided, if anything. Be specific. Do not editorialize. Quote directly when material is contested or unclear.
+- title: a concise headline (aim for under ${TITLE_TARGET_MAX_LEN} characters) capturing what this chapter is about. Style guide: agenda-item titles should name the topic; public-comment titles should name the speaker if introduced ("Public comment from Jane Smith"); vote titles should name the motion ("Vote: approve treasurer's report"); procedure titles describe the procedural action.
+- description: 1–2 sentences (aim for under ${DESCRIPTION_TARGET_MAX_LEN} characters) summarizing what was said and what was decided, if anything. Be specific. Do not editorialize. Quote directly when material is contested or unclear.
 
 Both fields are required and must be non-empty.`;
