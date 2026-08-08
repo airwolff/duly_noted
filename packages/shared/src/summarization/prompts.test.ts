@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { SUMMARY_MAX_CHARS, SUMMARY_MIN_CHARS } from './constants.js';
+import {
+  SUMMARY_MAX_CHARS,
+  SUMMARY_MIN_CHARS,
+  SUMMARY_TARGET_MAX_CHARS,
+  SUMMARY_TARGET_MIN_CHARS,
+} from './constants.js';
 import {
   buildSummaryUserPrompt,
   SUMMARIZATION_SYSTEM_PROMPT,
@@ -47,9 +52,19 @@ describe('SUMMARIZATION_SYSTEM_PROMPT', () => {
     );
   });
 
-  it('mentions the configured length bounds', () => {
-    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_MIN_CHARS));
-    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_MAX_CHARS));
+  it('states the target range, not the enforced ceiling', () => {
+    // The prompt must aim below the Zod bound. Stating the ceiling is what
+    // produced 2075/2268/2315/2352-char summaries against a 2000 cap in
+    // production — the model aims at whatever number it is given.
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_TARGET_MIN_CHARS));
+    expect(SUMMARIZATION_SYSTEM_PROMPT).toContain(String(SUMMARY_TARGET_MAX_CHARS));
+    expect(SUMMARIZATION_SYSTEM_PROMPT).not.toContain(String(SUMMARY_MAX_CHARS));
+  });
+
+  it('keeps a comfortable margin between the prompt target and the Zod ceiling', () => {
+    // The margin is the whole mechanism: it absorbs the model's overshoot.
+    expect(SUMMARY_MAX_CHARS - SUMMARY_TARGET_MAX_CHARS).toBeGreaterThanOrEqual(500);
+    expect(SUMMARY_TARGET_MIN_CHARS).toBeGreaterThan(SUMMARY_MIN_CHARS);
   });
 
   it('forbids editorializing and inferring outcomes', () => {

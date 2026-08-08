@@ -297,6 +297,8 @@ Heavier post-hoc verification (RAGAS Faithfulness, claim-to-segment alignment sc
 
 **Output enforcement.** Native structured outputs with a JSON schema for `{ summary: string }`. Zod schema mirrors it and additionally enforces length bounds. JSON + Zod schemas live in `packages/shared/src/summarization/schemas.ts`.
 
+The prompt target and the enforced bound are deliberately different numbers. The prompt asks for 1200–1800 characters (`SUMMARY_TARGET_*_CHARS`); Zod allows 200–2500 (`SUMMARY_MIN/MAX_CHARS`). Anthropic does not honor `minLength`/`maxLength`, so the model aims at whatever figure the prompt names and overshoots it — the first four production summaries landed at 2075, 2268, 2315, and 2352 characters when the prompt and the bound were both 2000, failing all four meetings. The ~700-character margin absorbs the observed 4–18% overshoot; the worker's single correction retry (`apps/worker/src/pipeline/length-retry.ts`) covers the tail. Raising the enforced bound without lowering the prompt target would reproduce the failure at a higher number.
+
 **State transition.** The worker uses two RPCs paralleling Slice 3's `claim_segmenting_meeting()` / `complete_segmentation()` pair, ensuring the CLAUDE.md §6 lock-then-atomic-update rule holds across the LLM call's duration without keeping a Postgres connection open for the full call:
 
 - `claim_summarizing_meeting()` — opens a transaction, executes `SELECT ... FOR UPDATE SKIP LOCKED` against rows at `status = 'summarizing'` (LIMIT 1), atomically updates the locked row to `status = 'summarizing_inflight'`, commits, returns the row. The transient `summarizing_inflight` state is the semaphore: once claimed, the row is invisible to other workers polling `summarizing`, so concurrent or restarted workers cannot redundantly call the LLM and double-bill Anthropic.
@@ -310,7 +312,7 @@ The user-facing transition advanced by this stage is `summarizing → embedding`
 
 - Anthropic API timeout, 429, or 5xx: worker retries up to 3× with exponential backoff (1s, 4s, 16s), then fails the row. Honor `retry-after` / `retry-after-ms` response headers when present in preference to the fixed schedule.
 - Schema-shape validation failure (Anthropic-side, expected to be impossible with structured outputs but covered defensively): Zod rejects, worker writes `status = 'failed'`, `last_error` captures the validation message, manual reset required.
-- Length-bound violation: same handling — fails the row with `last_error` recording the actual length and the configured bounds.
+- Length-bound violation: the worker re-calls once with the rejection fed back to the model (`parseWithLengthRetry`), then fails the row if the correction is also out of bounds, with `last_error` recording the actual length and the configured bounds. This is a retry of a single LLM call inside the stage, not the automatic retry of a `failed` meeting that CLAUDE.md §7 forbids.
 - Empty `segments` array at pickup: worker fails the row before any LLM call. Should not occur post-Slice-3 (segmenting writes ≥1 segment or fails the row); guarded defensively because the LLM call without context produces meaningless output.
 - Successful call but model-flagged refusal (rare): worker fails the row with `last_error` capturing the refusal reason.
 
