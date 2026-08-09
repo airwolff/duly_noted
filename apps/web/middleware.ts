@@ -2,10 +2,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@duly-noted/db';
 import { loadEnv } from '@/lib/env.js';
 
-const PUBLIC_PATHS = ['/login', '/auth/callback'];
+/**
+ * Admin routes live at `/{publication.slug}/admin/*` (apps/web/CLAUDE.md §2)
+ * and are the only surface this middleware gates. Everything else — reader
+ * routes, `/login`, `/auth/callback`, the root page — falls through
+ * unauthenticated and is scoped by RLS: a member sees their publication, an
+ * anonymous visitor sees publications flagged `public_read` and nothing else
+ * (ADR 0024).
+ *
+ * Anchored to exactly the second path segment on purpose. A town or board
+ * slug of "admin" sits one segment deeper and stays a reader route.
+ */
+const ADMIN_PATH = /^\/[^/]+\/admin(?:\/|$)/;
 
-function isPublic(pathname: string): boolean {
-  return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + '/'));
+function isAdminRoute(pathname: string): boolean {
+  return ADMIN_PATH.test(pathname);
 }
 
 export async function middleware(request: NextRequest) {
@@ -53,7 +64,7 @@ export async function middleware(request: NextRequest) {
     }
     return response;
   }
-  if (isPublic(request.nextUrl.pathname)) return response;
+  if (!isAdminRoute(request.nextUrl.pathname)) return response;
 
   const loginUrl = new URL('/login', request.url);
   loginUrl.searchParams.set('redirectTo', request.nextUrl.pathname + request.nextUrl.search);
