@@ -36,12 +36,25 @@ Next.js / Cloudflare Pages surface.
 
 ## 3. Auth gate
 
-- `apps/web/middleware.ts` refreshes the Supabase session cookie on every
-  non-asset request. It redirects unauthenticated requests to `/login`
-  (preserving the requested URL as a `redirectTo` param) for **admin
-  routes only**. Reader routes fall through unauthenticated and are
-  scoped by RLS: a member sees their publication, an anonymous visitor
-  sees publications flagged `public_read` and nothing else (ADR 0024).
+- `apps/web/src/middleware.ts` refreshes the Supabase session cookie on
+  every non-asset request. It redirects unauthenticated requests to
+  `/login` (preserving the requested URL as a `redirectTo` param) for
+  **admin routes only**. Reader routes fall through unauthenticated and
+  are scoped by RLS: a member sees their publication, an anonymous
+  visitor sees publications flagged `public_read` and nothing else
+  (ADR 0024).
+- **The middleware file must live at `apps/web/src/middleware.ts`.**
+  This app uses a `src/` directory, and Next.js only discovers
+  middleware at `src/middleware.ts` in that layout — at the project
+  root it is **silently ignored**, with no warning at build or dev time.
+  It sat at `apps/web/middleware.ts` from the initial scaffold until
+  2026-08-09 and therefore never ran in production: sessions were never
+  refreshed, `resolve_pending_invitations()` never fired, and admin
+  routes had no edge auth gate (they stayed protected by the page-level
+  admin check and RLS). Verify with `pnpm -F web build` — the output
+  must include a `ƒ Middleware` line, and
+  `.next/server/middleware-manifest.json` must have a non-empty
+  `middleware` key. An empty `middleware: {}` means it is not wired up.
 - Middleware additionally calls `resolve_pending_invitations()` on
   session establishment (Slice 7+). The RPC is idempotent and no-ops
   for users with no matching open invitations; the call adds one
