@@ -15,8 +15,6 @@
     "next-env.d.ts",
     "src/**/*",
     ".next/types/**/*.ts",
-    "middleware.ts",
-    "middleware.test.ts",
     "vitest.setup.ts",
     "vitest.config.ts"
   ],
