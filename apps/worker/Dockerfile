@@ -1,10 +1,17 @@
 # Build context = repo root. Invoke as:
 #   docker build -f apps/worker/Dockerfile -t duly-noted-worker .
 #
-# yt-dlp pin: latest stable release as of 2026-08-07
-# (https://github.com/yt-dlp/yt-dlp/releases/tag/2026.07.04). Bumps are
+# yt-dlp pin: latest stable release as of 2026-09-07
+# (https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19). Bumps are
 # intentional commits, not lockfile drift (CLAUDE.md §6).
-ARG YT_DLP_VERSION=2026.07.04
+#
+# 2026.07.04 -> 2026.08.19 is a correctness fix, not hygiene. 2026.07.04 mints
+# media URLs with the ANDROID_VR player client (`&c=ANDROID_VR`) but then
+# requests them with a desktop Chrome User-Agent; googlevideo rejects the
+# mismatch with `HTTP Error 403: Forbidden` at the download step, after
+# metadata extraction has already succeeded. Reproduced 5/5 on 2026.07.04 and
+# fixed 1/1 on 2026.08.19 against the same video and proxy session.
+ARG YT_DLP_VERSION=2026.08.19
 # Deno pin: yt-dlp's YouTube extractor now requires a JavaScript runtime and
 # enables only deno by default. Without it every extraction logs "No supported
 # JavaScript runtime could be found" and loses formats (ADR 0019).

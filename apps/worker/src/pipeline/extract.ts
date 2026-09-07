@@ -25,6 +25,17 @@ export function buildYtDlpArgs(url: string, outPath: string, proxyUrl?: string):
  * fingerprints Render's datacenter range and answers direct requests with
  * HTTP 429 + "Sign in to confirm you're not a bot", so extraction without it
  * fails for every meeting in production.
+ *
+ * The proxy URL must pin a single exit IP for the whole yt-dlp run. YouTube
+ * binds each `googlevideo` media URL to the IP that requested it (the URL
+ * carries `&ip=<addr>`), so a gateway that rotates per request mints the URL
+ * on one IP and fetches it from another, and the download 403s. ProxyWing
+ * pins via username suffixes: `-session-<id>` holds one node, `-country-us`
+ * keeps that node somewhere that can reach YouTube at all. Both are required;
+ * without `-country-us` a session can pin to a node that fails TLS outright.
+ * The suffixes live in the `YT_DLP_PROXY_URL` value, not here, so this code
+ * stays vendor-agnostic — but a proxy URL without them fails at the download
+ * step while metadata extraction still succeeds, which is a confusing shape.
  */
 export async function extractAudio(
   youtubeId: string,
