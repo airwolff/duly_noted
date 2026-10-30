@@ -1,35 +1,43 @@
-# Handoff — `fix/middleware-src-location` — 2026-08-12
+# Handoff — `main` — 2026-08-20
 
-Read `CLAUDE.md` and `SPEC.md` first, then this file.
+Read `CLAUDE.md` and `SPEC.md` first, then this file. `docs/sprint.md` holds the ordering of
+remaining work; this file holds the state.
 
-The user is **pausing this project for a while.** Nothing is half-finished in the working tree —
-it is clean, and everything built is merged except one PR that is green and waiting on a decision.
-This file is written for a cold restart weeks later, not for tomorrow.
+The project is **paused, not stalled.** Nothing is half-finished, nothing is mid-deploy, and the
+production system keeps running on its own while nobody watches it. This file is written for a
+cold restart weeks later.
 
 ---
 
 ## ▶ Resume here
 
-**The pipeline works unattended.** On 2026-08-10 the cron discovered the Aug 10 Select Board
-meeting and it reached `published` at 01:52 UTC on 2026-08-11 with **no human involvement** —
-extraction through proxy, ASR, segmentation (38 segments), and a 3-paragraph summary. That is the
-first fully autonomous end-to-end run and it is the strongest evidence in this file. **5 meetings
-are published**, which is exactly the 5-meeting cap the user set.
+**The build is feature-complete and the pipeline runs unattended.** All seven slices shipped.
+On 2026-08-10 the cron discovered the Aug 10 Select Board meeting and it reached `published` at
+01:52 UTC on 2026-08-11 with **no human involvement** — extraction through proxy, ASR, 38 segments,
+3-paragraph summary. The cron was last observed alive **2026-08-19T15:01Z**, still scanning.
+**5 meetings are published**, exactly the 5-meeting cap the user set.
 
-**One thing is open, and it is a decision, not a task:**
+**Exactly one action is outstanding, and only the user can perform it:**
 
-**PR #14 — <https://github.com/airwolff/duly_noted/pull/14>** — `fix/middleware-src-location`,
-branch `c2dbc2a`. **All four checks pass** (build, functions-deploy-coverage, GitGuardian,
-Cloudflare Pages preview); `mergeStateStatus: CLEAN`. It was deliberately **not merged** because it
-changes production auth behavior and the user's earlier "merge it" referred to #13. See
-**Next steps §1** for what merging turns on.
+```sql
+update publications set public_read = true where slug = 'midcoast-villager';
+```
 
-**The second open item, also a decision:** `publications.public_read` is still `false` for
-`midcoast-villager`. Flipping it is what makes the demo link shareable. It is one row, no
-migration, no deploy, and — see Gotchas — it is **independent of #14**.
+Run it in the Supabase SQL editor:
+<https://supabase.com/dashboard/project/bnyjoynsmjdurcpbnycn/sql/new>
 
-Nothing is broken. Nothing is waiting on a build. If you are picking this up cold, read Next steps
-and then ask the user which of the two decisions they want to make.
+**An assistant cannot do this.** `service_role` has SELECT but not UPDATE on `publications` —
+PostgREST returns `42501 permission denied for table publications`. That is the schema being
+correct; do **not** add an UPDATE grant to widen a permanent privilege for a one-row change.
+
+Flipping it is what makes the demo link shareable, and it is the **first time the anonymous RLS
+policies will ever have served a request** — they were written in #11 (2026-08-08) and have sat
+behind a `false` flag ever since. After the flip, load
+`https://duly-noted.pages.dev/midcoast-villager/lincolnville/select-board` signed out, and check a
+**meeting page** too, not just the list: the anon policy on `segments` is the likeliest to be wrong.
+
+Everything else is optional, ordered in `docs/sprint.md`. Nothing is broken, nothing is waiting on
+a build, and no decision is blocking anyone.
 
 Reset command shape, kept for future manual recoveries (service-role, PostgREST):
 
@@ -47,9 +55,10 @@ states are `published` and `failed`. Reset to the stage that failed, never to `p
 
 ---
 
-## What happened this session
+## What happened last
 
-Two PRs, both about the same file, and the second only became visible once the first was written.
+Three PRs about one file, and the second only became visible once the first was written. All are
+merged; `main` is `a2dfee4`.
 
 **#13 — `fix(web): gate middleware on admin routes only` (`0a5aa8c`, merged).** The middleware's
 `PUBLIC_PATHS` allowlist held only `/login` and `/auth/callback`, so it was written to redirect
@@ -57,7 +66,7 @@ _every_ unauthenticated request to `/login`. ADR 0024 says reader routes fall th
 only `/{publication}/admin/*` is gated. Replaced the allowlist with an `ADMIN_PATH` regex anchored
 to exactly the second path segment, so a town or board slug of `admin` stays a reader route.
 
-**#14 — `fix(web): move middleware into src/` (`c2dbc2a`, open).** While verifying #13 against
+**#14 — `fix(web): move middleware into src/` (`a2dfee4`, merged).** While verifying #13 against
 production, an anonymous request to `/{publication}/admin/members` returned **404 from the page's
 own `notFound()`** — not a 307 to `/login` — with `x-edge-runtime: 1` and `x-matched-path` set.
 The Worker ran and the route server-rendered, but nothing intercepted. Cause: this app uses a
@@ -77,6 +86,9 @@ non-empty `middleware` key. `middleware: {}` means it is not wired up.
 held only `/login` would have activated a middleware that redirected every anonymous reader
 request to `/login` — breaking the reader surface entirely. Narrowing the gate before waking the
 middleware is what makes #14 safe.
+
+**#15 / #16 — docs.** `#15` (`eefd644`) refreshed this file and added `docs/sprint.md`. `#16`
+reordered the sprint to put the audit last. Neither touches code or schema.
 
 ### Correction to the 2026-08-09 handoff
 
@@ -99,9 +111,21 @@ was wrong; it is why #14 shipped a build check instead of prose.
   summary. No manual reset, no intervention. This retires the "the worker image built and
   deployed" assumption from the last handoff — the ADR 0019 proxy, the yt-dlp bump, and the Deno
   install are all provably live.
-- 5 meetings `published`, 26 `failed`, 31 `discovered` (queried 2026-08-12; see Live state).
-- `publications.public_read` is `false` for `midcoast-villager` (queried directly).
-- PR #14: all four checks pass, `MERGEABLE` / `CLEAN`. Working tree clean; `main` clean.
+- **The middleware is live and gating admin routes.** Probed anonymously against production on
+  2026-08-12 and again on 2026-08-20: `/midcoast-villager/admin/members` returns **307** to
+  `/login?redirectTo=%2Fmidcoast-villager%2Fadmin%2Fmembers`. Before #14 the same request returned
+  404 from the page's own `notFound()`. This is the first time in the project's history that the
+  middleware has run in production, and it retires the "#14's behavior in production" assumption.
+- **Reader routes pass through the gate.** `/midcoast-villager/lincolnville/select-board` returns
+  **404 with no redirect** — through the middleware untouched, refused by RLS because
+  `public_read` is `false`. Exactly the ADR 0024 design.
+- **The cron is still alive at rest.** Newest `meetings` row created `2026-08-19T15:01:23Z` (a
+  Harbor Cam livestream, correctly left at `discovered`) — eight days after the last human touched
+  the repo.
+- 5 meetings `published`, 26 `failed`, 32 `discovered`, 63 total (queried 2026-08-20).
+- `publications.public_read` is still `false` for `midcoast-villager` (queried directly).
+- **PRs #14 and #15 merged** to `main` 2026-08-12T19:01Z as `a2dfee4` and `eefd644`; CI, Migrate,
+  and Deploy Edge Functions all green on both. Working tree clean.
 - `service_role` genuinely cannot read `memberships` (`42501 permission denied`). This is
   **correct, not a gap** — the only `from('memberships')` in a function
   (`supabase/functions/invite-user/index.ts:91`) runs on a **user-scoped** client with the caller's
@@ -111,24 +135,29 @@ was wrong; it is why #14 shipped a build check instead of prose.
 **Assumed — not observed**
 
 - **The anon RLS policies work.** Still never exercised: `public_read` is `false`, so no anonymous
-  request has ever hit them. First real exercise is the flag flip.
-- **#14's behavior in production.** Verified in a local build and in a Pages preview deploy; the
-  three consequences listed in Next steps §1 have not been observed on the production URL because
-  the PR is unmerged.
-- **Cloudflare deployed `main` after #13 merged.** Almost certainly yes (the merge is 3 days old),
-  but no one read the Pages dashboard.
+  request has ever reached them. First real exercise is the flag flip. This is now the **only**
+  large unverified surface in the system.
+- **Session refresh and `resolve_pending_invitations()`.** Both went live with #14 and neither has
+  been observed. The admin redirect was the observable third of that change; these two need a real
+  signed-in session over an hour, and an invited user clicking a magic link, respectively.
+- **No Select Board meeting has been missed since Aug 10.** The board meets roughly fortnightly, so
+  the next one is due around Aug 24 and the gap looks normal — but nobody has cross-checked the
+  YouTube channel against the `meetings` table to confirm the cron isn't silently skipping.
 
 ---
 
 ## Live state
 
-Cloud database, queried 2026-08-12.
+Cloud database, queried 2026-08-20. 63 rows total.
 
 | Status       | Count | Meaning                                                                                                                                                 |
 | ------------ | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `published`  | 5     | see below                                                                                                                                               |
 | `failed`     | 26    | 25 old yt-dlp bot-detection failures + 1 storage-upload failure                                                                                         |
-| `discovered` | 31    | Correctly parked — Harbor Cam livestreams (`duration 0`), Planning Board, Budget Committee, and short items all fail `title_pattern` or the 600 s floor |
+| `discovered` | 32    | Correctly parked — Harbor Cam livestreams (`duration 0`), Planning Board, Budget Committee, and short items all fail `title_pattern` or the 600 s floor |
+
+The only change since 2026-08-12 is one new `discovered` Harbor Cam row (2026-08-19T15:01Z), which
+is the cron proving it still runs.
 
 **Published (5):**
 
@@ -165,40 +194,21 @@ never diagnosed. Cheap to retry (extraction already paid nothing durable; ASR no
 
 ## Next steps
 
-1. **Decide on PR #14.** Green and waiting. Merging turns on three things that have **never
-   happened in production**:
-   - Signed-in sessions stop silently expiring after ~1 h (cookie refresh starts working).
-   - `resolve_pending_invitations()` begins firing on session establishment.
-   - Admin routes redirect anonymous visitors to `/login` instead of 404ing.
+Ordering and rationale live in **`docs/sprint.md`** — do not duplicate them here. In short:
 
-   Reader routes are unaffected — they pass through under the admin-only gate. One cost: every
-   anonymous reader request now makes a `supabase.auth.getUser()` round-trip, so public demo
-   traffic picks up latency. Unavoidable if you want session refresh; it is what the design
-   already called for.
-
-2. **Decide on `public_read`.** One row:
-
-   ```sql
-   UPDATE publications SET public_read = true WHERE slug = 'midcoast-villager';
-   ```
-
-   Then load `https://duly-noted.pages.dev/midcoast-villager/lincolnville/select-board`
-   **signed out** — the first real exercise of the anon RLS policies. This is what makes the link
-   shareable with Midcoast Villager.
-
-3. **Then the audit.** The user wants a top-to-bottom `/code-audit` with Fable 5. It has been
-   deferred through three sessions now. Recent history is exactly what the audit hunts: an
-   accepted-but-unimplemented ADR (0019), a doc/code drift that went unnoticed for three months
-   (the middleware location), and two conventions conflicts.
-
-4. **Optional, costed:** drain part of the 25-meeting backlog, and/or add a second town. See
-   Open decisions.
+1. **Flip `public_read`** (Resume here) and exercise the anon path signed out.
+2. **Retry `17ca2eb0…`**, the one failure whose mode was never diagnosed.
+3. **B9** — fold the search Edge Function's inline embedding schema and constants back into
+   `packages/shared`. Closes NI-009 and NI-020.
+4. **B7 — pre-launch test sweep.** The largest remaining piece and a slice in its own right.
+5. **`/code-audit` with Fable 5, last.** Moved to the end by the user's decision on 2026-08-12:
+   it is the gate on "done," not a checkpoint partway through, and running it before B7 and B9
+   would review code those items are about to change.
 
 **Open decisions the user has not made**
 
-- **Merge #14?** (Next steps §1.) Held deliberately, not blocked.
-- **Flip `public_read`?** (Next steps §2.) And who does it — the assistant via PostgREST, or the
-  user in the Supabase dashboard.
+- **Flip `public_read`?** The only outstanding action, and only the user can run it (see
+  Resume here for why).
 - **Drain more of the 25-meeting backlog** (~$1.70 each, ~$43 for all)? 5 meetings demos the
   pipeline; a year of archive demos the product, and search is thin at 5. This would take the demo
   set past the user's own 5-meeting cap, which is theirs to change.
@@ -224,9 +234,10 @@ never diagnosed. Cheap to retry (extraction already paid nothing durable; ASR no
   this handoff were wrong about `apps/web/middleware.ts` — first that it did not exist, then that
   its behavior was live. Both were repaired by one command against reality. The Live state counts
   and the verified/assumed split are queried; anything phrased as a status is a lead to check.
-- **The demo is not blocked by #14.** Because the middleware never ran, nothing was ever bouncing
-  anonymous readers to `/login`. A 404 on a reader route is purely RLS with `public_read = false`.
-  The flag flip works with or without #14.
+- **A 404 on a reader route is RLS, not auth.** Confirmed by probe on 2026-08-20: the reader route
+  returns 404 with no redirect, so it reached RLS and was refused for `public_read = false`. If you
+  see a **307 to `/login`** on a reader route instead, that is a different bug — the `ADMIN_PATH`
+  regex in `apps/web/src/middleware.ts` has stopped being anchored to the second path segment.
 - **Middleware must live at `apps/web/src/middleware.ts`** and a wrong location fails **silently**.
   Check the build: `ƒ Middleware` line present, `middleware-manifest.json` `middleware` key
   non-empty. `apps/web/CLAUDE.md` §3.
