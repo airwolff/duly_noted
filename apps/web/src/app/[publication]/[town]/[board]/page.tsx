@@ -16,9 +16,13 @@ export default async function BoardPage({
   const chain = await resolveBoardChain(supabase, pSlug, tSlug, bSlug);
   if (!chain) notFound();
 
+  // Count segments client-side from their ids. PostgREST's `segments(count)`
+  // needs table-level SELECT on segments, and anon only holds column-level
+  // grants (embedding is withheld), so the aggregate fails with 42501 for
+  // signed-out readers on a public_read publication (ADR 0024).
   const { data: rawMeetings } = await supabase
     .from('meetings')
-    .select('id, title, meeting_date, segments(count)')
+    .select('id, title, meeting_date, segments(id)')
     .eq('board_id', chain.board.id)
     .eq('status', 'published')
     .order('meeting_date', { ascending: false });
@@ -27,7 +31,7 @@ export default async function BoardPage({
     id: string;
     title: string | null;
     meeting_date: string | null;
-    segments: Array<{ count: number }>;
+    segments: Array<{ id: string }>;
   }> | null;
 
   return (
@@ -50,7 +54,7 @@ export default async function BoardPage({
               className="block text-blue-700 hover:underline"
             >
               <span className="block text-sm text-slate-500">
-                {m.meeting_date ?? 'Date unknown'} · {m.segments[0]?.count ?? 0} segments
+                {m.meeting_date ?? 'Date unknown'} · {m.segments.length} segments
               </span>
               <span className="block">{m.title ?? '(untitled)'}</span>
             </Link>
