@@ -10,6 +10,8 @@ interface YouTubeEmbedProps {
   transcriptExcerpt: string;
   /** Start playing on load. Set when the embed is mounted by a click. */
   autoplay?: boolean;
+  /** Sizing for the player box. Defaults to a full-width 16:9 block. */
+  className?: string;
 }
 
 declare global {
@@ -47,6 +49,7 @@ export function YouTubeEmbed({
   startSeconds,
   transcriptExcerpt,
   autoplay = false,
+  className = 'mt-3 aspect-video w-full',
 }: YouTubeEmbedProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [errored, setErrored] = useState(false);
@@ -90,7 +93,7 @@ export function YouTubeEmbed({
   }
 
   return (
-    <div className="mt-3 aspect-video overflow-hidden rounded-md bg-black">
+    <div className={`${className} overflow-hidden rounded-md bg-black`}>
       <iframe
         ref={iframeRef}
         data-testid="youtube-iframe"
