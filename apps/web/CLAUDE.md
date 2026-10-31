@@ -134,6 +134,10 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
   `onError` events to drive the B3 fallback. Wrap each iframe in a
   client component that handles error codes 100, 101, 150, 153 and
   renders the fallback panel.
+- Mount each iframe on demand. `SegmentVideo` renders a "Play from m:ss"
+  button and mounts the `YouTubeEmbed` (with `autoplay=1`) only when it is
+  clicked. A meeting page has ~30–40 segments, and mounting every iframe up
+  front loaded that many YouTube players on page open.
 
 ## 6. Styling
 

@@ -6,17 +6,20 @@ import { useState } from 'react';
 export function TranscriptToggle({ excerpt }: { excerpt: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-3">
+    <>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="text-sm text-slate-600 underline-offset-2 hover:underline"
+        aria-expanded={open}
+        className="text-sm text-stone-500 underline-offset-2 hover:text-stone-800 hover:underline"
       >
-        {open ? 'Hide transcript excerpt' : 'Show transcript excerpt'}
+        {open ? 'Hide transcript' : 'Read transcript'}
       </button>
       {open && (
-        <pre className="mt-2 whitespace-pre-wrap rounded bg-slate-50 p-3 text-sm">{excerpt}</pre>
+        <blockquote className="mt-1 w-full basis-full whitespace-pre-wrap border-l-2 border-stone-300 pl-4 text-sm leading-relaxed text-stone-600">
+          {excerpt}
+        </blockquote>
       )}
-    </div>
+    </>
   );
 }
