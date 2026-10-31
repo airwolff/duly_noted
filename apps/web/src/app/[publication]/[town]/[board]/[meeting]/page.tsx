@@ -111,7 +111,7 @@ export default async function MeetingPage({
             {/* max-w-prose caps the measure at ~65 characters; longer lines are
               the main thing that makes a multi-paragraph summary hard to read
               on a wide screen. leading-relaxed opens up the line height. */}
-            <div className="mt-4 max-w-prose space-y-4 font-serif text-lg leading-relaxed text-stone-800">
+            <div className="mt-4 max-w-prose space-y-4 font-serif text-xl leading-relaxed text-stone-800">
               {splitParagraphs(meeting.summary).map((para, i) => (
                 <p key={i}>{para}</p>
               ))}

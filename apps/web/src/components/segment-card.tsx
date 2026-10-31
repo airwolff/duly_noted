@@ -13,13 +13,13 @@ export function SegmentCard({ segment }: { segment: Segment }) {
     // result deep-links here: a full-column 16:9 video plus its caption line.
     <article
       id={`segment-${segment.id}`}
-      className="scroll-mt-[calc(min(100vw,48rem)*0.5625+5rem)] rounded-lg border border-stone-200 bg-white p-5 shadow-sm target:ring-2 target:ring-blue-700"
+      className="scroll-mt-[calc(min(min(100vw,48rem)*0.5625,35vh)+5rem)] rounded-lg border border-stone-200 bg-white p-5 shadow-sm target:ring-2 target:ring-blue-700"
     >
       <div className="flex flex-wrap items-center gap-2">
         <MarkerBadge markerType={segment.marker_type} />
       </div>
       <h3 className="mt-2 font-serif text-xl font-semibold leading-snug">{segment.title}</h3>
-      <p className="mt-2 leading-relaxed text-stone-700">{segment.description}</p>
+      <p className="mt-2 text-lg leading-relaxed text-stone-700">{segment.description}</p>
       <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
         <PlayButton segmentId={segment.id} startSeconds={segment.start_time_seconds} />
         <TranscriptToggle excerpt={excerpt} />

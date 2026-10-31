@@ -77,11 +77,13 @@ export function MeetingPlayer({
           startSeconds={start}
           transcriptExcerpt={cue.segment?.excerpt ?? ''}
           autoplay={cue.autoplay}
-          className="aspect-video w-full"
+          className="mx-auto aspect-video w-full max-w-[calc(35vh*16/9)]"
         />
-        {/* One line, truncated, so the band's height stays predictable for the
+        {/* The width cap holds the pinned video to ~35% of the screen height
+            (wide screens) so the agenda keeps most of the page; on phones the
+            column is the narrower limit. One caption line, truncated, so the band's height stays predictable for the
             agenda cards' scroll-mt. */}
-        <p className="mt-2 truncate text-sm text-stone-600">
+        <p className="mx-auto mt-2 max-w-[calc(35vh*16/9)] truncate text-sm text-stone-600">
           <span className="font-semibold uppercase tracking-wide text-stone-500">
             {cue.segment ? `Now playing · ${formatTimestamp(start)}` : 'Full meeting'}
           </span>
