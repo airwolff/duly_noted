@@ -71,24 +71,25 @@ export function MeetingPlayer({
       {/* Negative margins bleed the band to the column edges so content
           scrolling underneath never shows beside the video. */}
       <div className="sticky top-0 z-20 -mx-4 mt-4 border-b border-stone-200 bg-stone-50 px-4 py-3 sm:-mx-8 sm:px-8">
-        <div className="flex items-center gap-5">
-          <YouTubeEmbed
-            key={cue.n}
-            youtubeId={youtubeId}
-            startSeconds={start}
-            transcriptExcerpt={cue.segment?.excerpt ?? ''}
-            autoplay={cue.autoplay}
-            className="aspect-video w-full shrink-0 md:h-[clamp(180px,26vh,320px)] md:w-auto"
-          />
-          <div className="hidden min-w-0 md:block">
-            <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-              {cue.segment ? `Now playing · ${formatTimestamp(start)}` : 'Full meeting'}
-            </p>
-            <p className="mt-1 font-serif text-lg font-semibold leading-snug text-stone-900">
-              {cue.segment ? cue.segment.title : 'Pick an agenda item below to jump to it.'}
-            </p>
-          </div>
-        </div>
+        <YouTubeEmbed
+          key={cue.n}
+          youtubeId={youtubeId}
+          startSeconds={start}
+          transcriptExcerpt={cue.segment?.excerpt ?? ''}
+          autoplay={cue.autoplay}
+          className="aspect-video w-full"
+        />
+        {/* One line, truncated, so the band's height stays predictable for the
+            agenda cards' scroll-mt. */}
+        <p className="mt-2 truncate text-sm text-stone-600">
+          <span className="font-semibold uppercase tracking-wide text-stone-500">
+            {cue.segment ? `Now playing · ${formatTimestamp(start)}` : 'Full meeting'}
+          </span>
+          <span className="mx-2 text-stone-300">|</span>
+          <span className="font-serif font-semibold text-stone-900">
+            {cue.segment ? cue.segment.title : 'Pick an agenda item below to jump to it.'}
+          </span>
+        </p>
       </div>
       {children}
     </PlayerContext.Provider>
