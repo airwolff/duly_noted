@@ -21,7 +21,7 @@ discovered → pending → extracting → transcribing → segmenting → summar
                                                                                        ↘  failed
 ```
 
-The `review` enum slot is reserved for the future operator review UI slice (Backlog B4) and slots between `embedding` and `published` in the enum ordering; no row sits in `review` at v1.
+The `review` enum slot is reserved for the future operator review UI slice (Backlog B4) and slots between `embedding` and `published` in the enum ordering; the pipeline never writes `review` at v1. Because nothing claims it, an operator may park a row there by hand to take it off the reader without deleting it (used for a Planning Board video misfiled under Select Board).
 
 - **Cron Job** writes new `discovered` rows from YouTube Data API responses, filtered by per-board `ingest_since_days` horizon (default 365), then auto-promotes to `pending` based on per-board title pattern + minimum duration.
 - **Worker** picks up `pending` rows with `SELECT ... FOR UPDATE SKIP LOCKED`, runs `yt-dlp` to extract audio, uploads to Supabase Storage, submits a signed Storage URL to AssemblyAI, and parks the row at `transcribing`.
@@ -199,9 +199,12 @@ Cron schedule: hourly (`0 * * * *`). Lincolnville Select Board meets monthly; ho
 
 ```sql
 status = 'discovered'
+AND boards.auto_promote
 AND duration_seconds >= boards.min_duration_seconds
 AND title ~* boards.title_pattern
 ```
+
+`boards.auto_promote` (default true) is the per-board off switch. With it false the cron still catalogs videos at `discovered` (YouTube quota only, no vendor cost) and a meeting enters the pipeline only when an operator sets it to `pending`. This is how the demo set is held to hand-picked meetings.
 
 For Lincolnville Select Board:
 
@@ -209,7 +212,7 @@ For Lincolnville Select Board:
 - `min_duration_seconds = 600`
 - `ingest_since_days = 365` (default)
 
-Town Meeting and Planning Board content on the same channel are separate board entities with their own patterns when added; each can carry its own `ingest_since_days` for cases like historical-reconstruction onboarding.
+Town Meeting and Planning Board content on the same channel are separate board entities with their own patterns when added; each can carry its own `ingest_since_days` for cases like historical-reconstruction onboarding. Discovery inserts only playlist items whose title matches the board's `title_pattern` (case-insensitive, mirroring `~*`; patterns stay within the regex subset JS and Postgres share), so sibling boards on one channel each receive their own videos. A board with no pattern receives every video on the channel.
 
 **Failure modes.**
 
@@ -358,6 +361,7 @@ Additive, single migration file `NNNN_slice_2_ingestion_schema.sql`, backwards-c
 - `youtube_channel_id text` (nullable; cron skips boards without one)
 - `title_pattern text` (nullable; Postgres `~*` regex; cron auto-promote rule)
 - `min_duration_seconds int default 0` (cron auto-promote rule)
+- `auto_promote boolean not null default true` (per-board off switch for auto-promotion; added 2026-10-31)
 - `ingest_since_days int not null default 365` (cron horizon; cron skips `playlistItems.list` entries with `snippet.publishedAt` older than `now() - ingest_since_days`. Per-board so historical-reconstruction boards can override without affecting steady-state.)
 - `uploads_playlist_id text generated always as ('UU' || substr(youtube_channel_id, 3)) stored` (computed; eliminates a `channels.list` call per scan). Paired with `CHECK (youtube_channel_id IS NULL OR youtube_channel_id LIKE 'UC%')` so the substr() expression always operates on a valid channel id. (`replace(youtube_channel_id, 'UC', 'UU')` was the original draft; replaced because `replace()` is global and would corrupt the playlist id if `UC` ever appeared mid-string.)
 
@@ -950,7 +954,7 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 ## B4 — Operator review gate at `review → published` + residual admin surfaces
 
 - **What:** Two related deferred surfaces bundled under one backlog entry because they share the admin-UI route prefix `/{publication.slug}/admin/...` introduced by Slice 7.
-  - **B4a — Operator review gate.** Operator review UI that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → embedding → published` directly in Stages 6 and 9 with no human gate; no row sits in `review` at v1.
+  - **B4a — Operator review gate.** Operator review UI that reads meetings in `review` state, presents segments + summary with edit affordances, and advances `review → published` on operator approval. Until this lands, the worker auto-advances `summarizing → embedding → published` directly in Stages 6 and 9 with no human gate; the pipeline never writes `review` at v1. Because nothing claims it, an operator may park a row there by hand to take it off the reader without deleting it (used for a Planning Board video misfiled under Select Board).
   - **B4b — Residual member-management surfaces.** Slice 7 shipped only the invite form and the pending-invitations list view under `/{publication.slug}/admin/members`. The remaining admin operations stay deferred: member list view (active memberships with role display), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view of past invitations. Each is a real operational capability but none blocks the demo or the manual QA sweep — Andy can SQL-correct edge cases (typo'd invitations, removals, role corrections) until the residual UI lands.
 - **Why:**
   - B4a: Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.

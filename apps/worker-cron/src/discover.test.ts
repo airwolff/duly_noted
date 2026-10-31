@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { chunkIds, selectNewVideoIds, selectRefreshableIds } from './discover.js';
+import {
+  chunkIds,
+  matchesBoardTitle,
+  selectNewVideoIds,
+  selectRefreshableIds,
+} from './discover.js';
 
 describe('selectNewVideoIds', () => {
   it('returns ids that are not already in the existing set', () => {
@@ -80,5 +85,26 @@ describe('chunkIds', () => {
 
   it('returns a single batch when the list fits', () => {
     expect(chunkIds(['a', 'b'], 50)).toEqual([['a', 'b']]);
+  });
+});
+
+describe('matchesBoardTitle', () => {
+  it('keeps titles matching the board pattern, case-insensitively', () => {
+    expect(matchesBoardTitle('Select Board - August 10, 2026', 'select board')).toBe(true);
+    expect(matchesBoardTitle('PLANNING BOARD - June 25, 2026', 'planning board')).toBe(true);
+  });
+
+  it("drops sibling boards' videos from the same channel", () => {
+    expect(matchesBoardTitle('Planning Board - June 25, 2026', 'select board')).toBe(false);
+    expect(matchesBoardTitle('Budget Committee - April 14, 2026', 'select board')).toBe(false);
+  });
+
+  it('supports alternation for boards with more than one title form', () => {
+    const pattern = 'select board|selectboard';
+    expect(matchesBoardTitle('Camden Selectboard Meeting', pattern)).toBe(true);
+  });
+
+  it('keeps every title when the board has no pattern', () => {
+    expect(matchesBoardTitle('Anything at all', null)).toBe(true);
   });
 });

@@ -8,6 +8,7 @@ export interface DiscoverableBoard {
   youtube_channel_id: string | null;
   uploads_playlist_id: string | null;
   ingest_since_days: number;
+  title_pattern: string | null;
 }
 
 export interface DiscoverOutcome {
@@ -35,6 +36,22 @@ export function selectNewVideoIds(fetchedIds: string[], existingIds: string[]): 
     out.push(id);
   }
   return out;
+}
+
+/**
+ * Whether a video title belongs to a board. A town channel carries several
+ * boards' meetings (Select Board, Planning Board, Budget Committee), and each
+ * is its own board row on the same channel, so discovery keeps only the titles
+ * matching the board's `title_pattern`. Without this every video on the
+ * channel landed on whichever board scanned first.
+ *
+ * Case-insensitive to mirror the `~*` that auto_promote_for_board applies.
+ * Patterns are kept to the subset JS and Postgres regexes share (plain words,
+ * `|`, `^`). A board with no pattern keeps every title, as before.
+ */
+export function matchesBoardTitle(title: string, pattern: string | null): boolean {
+  if (pattern === null) return true;
+  return new RegExp(pattern, 'i').test(title);
 }
 
 export interface RefreshableRow {
@@ -98,22 +115,25 @@ export async function discoverForBoard(
   }
 
   const cutoffAt = new Date(Date.now() - board.ingest_since_days * 24 * 60 * 60 * 1000);
-  const items = await fetchUploadsPlaylistItems({
+  const allItems = await fetchUploadsPlaylistItems({
     apiKey: deps.apiKey,
     uploadsPlaylistId: board.uploads_playlist_id,
     cutoffAt,
   });
 
-  const fetchedIds = items.map((i) => i.videoId);
+  const boardItems = allItems.filter((i) => matchesBoardTitle(i.title, board.title_pattern));
+  const fetchedIds = boardItems.map((i) => i.videoId);
   if (fetchedIds.length === 0) {
     const promoted = await runAutoPromote(deps.supabase, board.id);
     return { boardId: board.id, inserted: 0, refreshed: 0, promoted };
   }
 
+  // Not scoped to this board: youtube_id is unique across meetings, and a
+  // video already filed under a sibling board on the same channel must not be
+  // re-inserted (the upsert would silently drop it and miscount).
   const { data: existing, error: existingErr } = await deps.supabase
     .from('meetings')
-    .select('youtube_id, status, duration_seconds')
-    .eq('board_id', board.id)
+    .select('board_id, youtube_id, status, duration_seconds')
     .in('youtube_id', fetchedIds);
   if (existingErr) {
     throw new Error(`existing-meetings query failed: ${existingErr.message}`);
@@ -123,7 +143,10 @@ export async function discoverForBoard(
     .map((row) => row.youtube_id)
     .filter((id): id is string => id !== null);
   const newIds = selectNewVideoIds(fetchedIds, existingIds);
-  const refreshIds = selectRefreshableIds(existingRows, fetchedIds);
+  const refreshIds = selectRefreshableIds(
+    existingRows.filter((row) => row.board_id === board.id),
+    fetchedIds,
+  );
 
   // One videos.list call per 50 ids, covering new and stale-duration rows in
   // the same batches. Quota is 1 unit per call regardless of id count, so
@@ -133,7 +156,7 @@ export async function discoverForBoard(
     details.push(...(await fetchVideoDetails({ apiKey: deps.apiKey, videoIds: batch })));
   }
   const detailById = new Map(details.map((d) => [d.id, d]));
-  const publishedAtById = new Map(items.map((i) => [i.videoId, i.publishedAt]));
+  const publishedAtById = new Map(boardItems.map((i) => [i.videoId, i.publishedAt]));
 
   let inserted = 0;
   const newRows = newIds

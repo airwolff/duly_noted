@@ -101,6 +101,7 @@ export interface Database {
           min_duration_seconds: number;
           uploads_playlist_id: string | null;
           ingest_since_days: number;
+          auto_promote: boolean;
         };
         Insert: {
           id?: string;
@@ -112,6 +113,7 @@ export interface Database {
           title_pattern?: string | null;
           min_duration_seconds?: number;
           ingest_since_days?: number;
+          auto_promote?: boolean;
         };
         Update: {
           id?: string;
@@ -123,6 +125,7 @@ export interface Database {
           title_pattern?: string | null;
           min_duration_seconds?: number;
           ingest_since_days?: number;
+          auto_promote?: boolean;
         };
         Relationships: [];
       };
