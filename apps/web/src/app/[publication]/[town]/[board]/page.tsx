@@ -3,6 +3,9 @@ import { notFound } from 'next/navigation';
 import { getSupabaseServerClient } from '@/lib/supabase-server.js';
 import { resolveBoardChain } from '@/lib/resolvers.js';
 import { formatMeetingDate } from '@/lib/format-meeting-date.js';
+import { formatDuration } from '@/lib/format-duration.js';
+import { splitParagraphs } from '@/lib/split-paragraphs.js';
+import { Breadcrumbs } from '@/components/breadcrumbs.js';
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
@@ -23,7 +26,7 @@ export default async function BoardPage({
   // signed-out readers on a public_read publication (ADR 0024).
   const { data: rawMeetings } = await supabase
     .from('meetings')
-    .select('id, title, meeting_date, segments(id)')
+    .select('id, title, meeting_date, duration_seconds, summary, segments(id)')
     .eq('board_id', chain.board.id)
     .eq('status', 'published')
     .order('meeting_date', { ascending: false, nullsFirst: false });
@@ -32,37 +35,53 @@ export default async function BoardPage({
     id: string;
     title: string | null;
     meeting_date: string | null;
+    duration_seconds: number | null;
+    summary: string | null;
     segments: Array<{ id: string }>;
   }> | null;
 
+  const base = `/${chain.publication.slug}/${chain.town.slug}/${chain.board.slug}`;
+
   return (
-    <main className="mx-auto max-w-3xl p-8">
-      <p className="text-sm text-slate-500">
-        <Link href={`/${chain.publication.slug}`} className="hover:underline">
-          {chain.publication.name}
-        </Link>
-        {' / '}
-        <Link href={`/${chain.publication.slug}/${chain.town.slug}`} className="hover:underline">
-          {chain.town.name}
-        </Link>
+    <main className="mx-auto max-w-3xl px-4 py-10 sm:px-8">
+      <Breadcrumbs
+        crumbs={[
+          { href: `/${chain.publication.slug}`, label: chain.publication.name },
+          { href: `/${chain.publication.slug}/${chain.town.slug}`, label: chain.town.name },
+        ]}
+      />
+      <h1 className="mt-2 font-serif text-4xl font-bold tracking-tight">{chain.board.name}</h1>
+      <p className="mt-2 text-stone-600">
+        {meetings?.length ?? 0} {meetings?.length === 1 ? 'meeting' : 'meetings'}, newest first
       </p>
-      <h1 className="text-3xl font-bold">{chain.board.name}</h1>
-      <ul className="mt-6 divide-y">
-        {(meetings ?? []).map((m) => (
-          <li key={m.id} className="py-3">
-            <Link
-              href={`/${chain.publication.slug}/${chain.town.slug}/${chain.board.slug}/${m.id}`}
-              className="block text-blue-700 hover:underline"
-            >
-              <span className="block text-sm text-slate-500">
-                {[formatMeetingDate(m.meeting_date), `${m.segments.length} segments`]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </span>
-              <span className="block">{m.title ?? '(untitled)'}</span>
-            </Link>
-          </li>
-        ))}
+      <ul className="mt-8 space-y-4">
+        {(meetings ?? []).map((m) => {
+          const date = formatMeetingDate(m.meeting_date);
+          const teaser = m.summary ? splitParagraphs(m.summary)[0] : null;
+          const meta = [
+            formatDuration(m.duration_seconds),
+            `${m.segments.length} agenda items`,
+          ].filter(Boolean);
+          return (
+            <li key={m.id}>
+              <Link
+                href={`${base}/${m.id}`}
+                className="group block rounded-lg border border-stone-200 bg-white p-5 shadow-sm transition hover:border-stone-300 hover:shadow sm:p-6"
+              >
+                <h2 className="font-serif text-2xl font-semibold group-hover:text-blue-800">
+                  {date ?? m.title ?? 'Untitled meeting'}
+                </h2>
+                <p className="mt-1 text-sm text-stone-500">{meta.join(' · ')}</p>
+                {teaser && (
+                  <p className="mt-3 line-clamp-3 leading-relaxed text-stone-700">{teaser}</p>
+                )}
+                <span className="mt-3 inline-block text-sm font-medium text-blue-800">
+                  Read the meeting →
+                </span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </main>
   );

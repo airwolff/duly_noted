@@ -8,6 +8,8 @@ interface YouTubeEmbedProps {
   youtubeId: string;
   startSeconds: number;
   transcriptExcerpt: string;
+  /** Start playing on load. Set when the embed is mounted by a click. */
+  autoplay?: boolean;
 }
 
 declare global {
@@ -40,7 +42,12 @@ function loadIframeApi(): Promise<void> {
   return scriptLoading;
 }
 
-export function YouTubeEmbed({ youtubeId, startSeconds, transcriptExcerpt }: YouTubeEmbedProps) {
+export function YouTubeEmbed({
+  youtubeId,
+  startSeconds,
+  transcriptExcerpt,
+  autoplay = false,
+}: YouTubeEmbedProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [errored, setErrored] = useState(false);
 
@@ -83,12 +90,12 @@ export function YouTubeEmbed({ youtubeId, startSeconds, transcriptExcerpt }: You
   }
 
   return (
-    <div className="mt-3 aspect-video">
+    <div className="mt-3 aspect-video overflow-hidden rounded-md bg-black">
       <iframe
         ref={iframeRef}
         data-testid="youtube-iframe"
         title="YouTube segment"
-        src={`https://www.youtube.com/embed/${youtubeId}?start=${startSeconds}&enablejsapi=1`}
+        src={`https://www.youtube.com/embed/${youtubeId}?start=${startSeconds}&enablejsapi=1${autoplay ? '&autoplay=1' : ''}`}
         allow="accelerometer; autoplay; encrypted-media; picture-in-picture"
         allowFullScreen
         className="h-full w-full"
