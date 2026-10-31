@@ -51,23 +51,17 @@ export default async function SearchPage({
       : null;
 
   return (
-    <main className="mx-auto max-w-3xl p-8">
-      <p className="text-sm text-slate-500">
-        <Link href={`/${publication.slug}`} className="hover:underline">
-          {publication.name}
-        </Link>
+    <main className="mx-auto max-w-3xl px-4 py-10 sm:px-8">
+      <h1 className="font-serif text-4xl font-bold tracking-tight">Search</h1>
+      <p className="mt-2 text-stone-600">
+        Finds agenda items by keyword and by meaning across every published meeting.
       </p>
-      <h1 className="mt-2 text-3xl font-bold">Search</h1>
-      <div className="mt-4">
+      <div className="mt-6">
         <SearchInput defaultQuery={query} />
       </div>
 
-      {query.length === 0 && (
-        <p className="mt-8 text-slate-500">Enter a query to search published meetings.</p>
-      )}
-
       {errorMessage && (
-        <div className="mt-8 rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="mt-8 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           Search failed: {errorMessage}.{' '}
           <Link
             href={`/${publication.slug}/search?q=${encodeURIComponent(query)}`}
@@ -79,21 +73,26 @@ export default async function SearchPage({
       )}
 
       {query.length > 0 && !errorMessage && results.length === 0 && (
-        <p className="mt-8 text-slate-500">No segments matched. Try different keywords.</p>
+        <p className="mt-8 text-stone-500">No agenda items matched. Try different words.</p>
       )}
 
       {results.length > 0 && (
-        <section className="mt-8 space-y-4">
-          {results.map((r) => (
-            <SearchResultCard key={r.segment_id} result={r} />
-          ))}
-        </section>
+        <>
+          <p className="mt-8 text-sm text-stone-500">
+            {results.length} {results.length === 1 ? 'result' : 'results'} for “{query}”
+          </p>
+          <section className="mt-3 space-y-4">
+            {results.map((r) => (
+              <SearchResultCard key={r.segment_id} result={r} />
+            ))}
+          </section>
+        </>
       )}
 
       {showMoreHref && (
         <p className="mt-6">
-          <Link href={showMoreHref} className="text-blue-700 hover:underline">
-            Show more
+          <Link href={showMoreHref} className="font-medium text-blue-800 hover:underline">
+            Show more results
           </Link>
         </p>
       )}

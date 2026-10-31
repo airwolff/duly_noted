@@ -126,7 +126,7 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
 
 ## 5. YouTube embed
 
-- Per-segment `<iframe>` with `?start={seconds}` in the URL. Do NOT use
+- YouTube `<iframe>` with `?start={seconds}` in the URL. Do NOT use
   the IFrame Player API for seek operations at v1 — the keyframe-aligned
   `?start=` parameter is the simpler and KB-justified path
   (`kb_video-timestamp-linking-ux`).
@@ -134,6 +134,11 @@ publication_id = $? AND role = 'admin'`. RLS on the underlying
   `onError` events to drive the B3 fallback. Wrap each iframe in a
   client component that handles error codes 100, 101, 150, 153 and
   renders the fallback panel.
+- One player per meeting page. `MeetingPlayer` renders a single sticky
+  `YouTubeEmbed` above the content; each agenda item's `PlayButton` cues it
+  by remounting the iframe with that segment's `?start=` (and `autoplay=1`).
+  That keeps the `?start=` pattern above — no API seek — while avoiding the
+  ~30–40 players that one iframe per segment loaded on page open.
 
 ## 6. Styling
 
