@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { excerptSnippetText } from '@/lib/clean-excerpt.js';
+import { formatMeetingDate } from '@/lib/format-meeting-date.js';
 
 export interface SearchResult {
   segment_id: string;
@@ -40,7 +42,7 @@ export function SearchResultCard({ result }: { result: SearchResult }) {
     <article className="rounded border border-slate-200 p-4">
       <p className="text-xs uppercase tracking-wide text-slate-500">
         {result.town_name} / {result.board_name}
-        {result.meeting_date ? ` · ${result.meeting_date}` : ''}
+        {result.meeting_date ? ` · ${formatMeetingDate(result.meeting_date)}` : ''}
       </p>
       <Link href={href} className="mt-1 block">
         <span className="font-semibold text-blue-700 hover:underline">
@@ -52,7 +54,9 @@ export function SearchResultCard({ result }: { result: SearchResult }) {
           {MARKER_LABEL[result.marker_type]}
         </span>
       </p>
-      <p className="mt-2 text-sm text-slate-700">{snippet(result.transcript_excerpt)}</p>
+      <p className="mt-2 text-sm text-slate-700">
+        {snippet(excerptSnippetText(result.transcript_excerpt))}
+      </p>
     </article>
   );
 }

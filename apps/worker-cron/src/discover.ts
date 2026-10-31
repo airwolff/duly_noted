@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@duly-noted/db';
 import { fetchUploadsPlaylistItems, fetchVideoDetails, type VideoDetail } from './youtube.js';
+import { meetingDate } from './meeting-date.js';
 
 export interface DiscoverableBoard {
   id: string;
@@ -132,6 +133,7 @@ export async function discoverForBoard(
     details.push(...(await fetchVideoDetails({ apiKey: deps.apiKey, videoIds: batch })));
   }
   const detailById = new Map(details.map((d) => [d.id, d]));
+  const publishedAtById = new Map(items.map((i) => [i.videoId, i.publishedAt]));
 
   let inserted = 0;
   const newRows = newIds
@@ -141,6 +143,7 @@ export async function discoverForBoard(
       board_id: board.id,
       youtube_id: d.id,
       title: d.title,
+      meeting_date: meetingDate(d.title, publishedAtById.get(d.id) ?? ''),
       duration_seconds: d.durationSeconds,
       status: 'discovered' as const,
     }));
@@ -154,15 +157,21 @@ export async function discoverForBoard(
     inserted = newRows.length;
   }
 
-  const refreshed = await refreshDurations(deps.supabase, board.id, refreshIds, detailById);
+  const refreshed = await refreshDurations(
+    deps.supabase,
+    board.id,
+    refreshIds,
+    detailById,
+    publishedAtById,
+  );
 
   const promoted = await runAutoPromote(deps.supabase, board.id);
   return { boardId: board.id, inserted, refreshed, promoted };
 }
 
 /**
- * Write the now-known duration (and post-stream title, which YouTube also
- * rewrites once a live stream ends) back onto rows still at `discovered`. The
+ * Write the now-known duration (and post-stream title and the date read from
+ * it, which YouTube also rewrites once a live stream ends) back onto rows still at `discovered`. The
  * status predicate is repeated in the UPDATE so a row the worker claimed
  * between the SELECT and here is left alone.
  */
@@ -171,6 +180,7 @@ async function refreshDurations(
   boardId: string,
   refreshIds: string[],
   detailById: Map<string, VideoDetail>,
+  publishedAtById: Map<string, string>,
 ): Promise<number> {
   let refreshed = 0;
   for (const id of refreshIds) {
@@ -181,7 +191,11 @@ async function refreshDurations(
     }
     const { error } = await supabase
       .from('meetings')
-      .update({ title: detail.title, duration_seconds: detail.durationSeconds })
+      .update({
+        title: detail.title,
+        meeting_date: meetingDate(detail.title, publishedAtById.get(id) ?? ''),
+        duration_seconds: detail.durationSeconds,
+      })
       .eq('board_id', boardId)
       .eq('youtube_id', id)
       .eq('status', 'discovered');

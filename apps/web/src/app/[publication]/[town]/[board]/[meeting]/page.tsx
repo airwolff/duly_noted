@@ -4,6 +4,7 @@ import { getSupabaseServerClient } from '@/lib/supabase-server.js';
 import { splitParagraphs } from '@/lib/split-paragraphs.js';
 import { resolveBoardChain } from '@/lib/resolvers.js';
 import { sortSegments } from '@/lib/sort-segments.js';
+import { formatMeetingDate } from '@/lib/format-meeting-date.js';
 import { SegmentCard } from '@/components/segment-card.js';
 import type { Database } from '@duly-noted/db';
 
@@ -81,8 +82,12 @@ export default async function MeetingPage({
       </p>
       <h1 className="mt-2 text-3xl font-bold">{meeting.title ?? '(untitled)'}</h1>
       <p className="text-slate-600">
-        {meeting.meeting_date}
-        {' · '}
+        {formatMeetingDate(meeting.meeting_date) && (
+          <>
+            {formatMeetingDate(meeting.meeting_date)}
+            {' · '}
+          </>
+        )}
         <a href={youtubeWatch} className="text-blue-700 hover:underline" rel="noreferrer">
           Watch on YouTube
         </a>
