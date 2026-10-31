@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getSupabaseServerClient } from '@/lib/supabase-server.js';
 import { resolveBoardChain } from '@/lib/resolvers.js';
+import { formatMeetingDate } from '@/lib/format-meeting-date.js';
 
 export const runtime = 'edge';
 export const dynamic = 'force-dynamic';
@@ -25,7 +26,7 @@ export default async function BoardPage({
     .select('id, title, meeting_date, segments(id)')
     .eq('board_id', chain.board.id)
     .eq('status', 'published')
-    .order('meeting_date', { ascending: false });
+    .order('meeting_date', { ascending: false, nullsFirst: false });
 
   const meetings = rawMeetings as Array<{
     id: string;
@@ -54,7 +55,9 @@ export default async function BoardPage({
               className="block text-blue-700 hover:underline"
             >
               <span className="block text-sm text-slate-500">
-                {m.meeting_date ?? 'Date unknown'} · {m.segments.length} segments
+                {[formatMeetingDate(m.meeting_date), `${m.segments.length} segments`]
+                  .filter(Boolean)
+                  .join(' · ')}
               </span>
               <span className="block">{m.title ?? '(untitled)'}</span>
             </Link>

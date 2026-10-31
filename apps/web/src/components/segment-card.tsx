@@ -1,5 +1,6 @@
 import { YouTubeEmbed } from '@/components/youtube-embed.js';
 import { TranscriptToggle } from '@/components/transcript-toggle.js';
+import { stripUtteranceMarkers } from '@/lib/clean-excerpt.js';
 import type { Database } from '@duly-noted/db';
 
 type Segment = Database['public']['Tables']['segments']['Row'];
@@ -13,6 +14,7 @@ const MARKER_LABEL: Record<Segment['marker_type'], string> = {
 };
 
 export function SegmentCard({ segment, youtubeId }: { segment: Segment; youtubeId: string }) {
+  const excerpt = stripUtteranceMarkers(segment.transcript_excerpt);
   return (
     <article id={`segment-${segment.id}`} className="rounded border border-slate-200 p-4">
       <div className="flex items-center gap-2">
@@ -25,9 +27,9 @@ export function SegmentCard({ segment, youtubeId }: { segment: Segment; youtubeI
       <YouTubeEmbed
         youtubeId={youtubeId}
         startSeconds={segment.start_time_seconds}
-        transcriptExcerpt={segment.transcript_excerpt}
+        transcriptExcerpt={excerpt}
       />
-      <TranscriptToggle excerpt={segment.transcript_excerpt} />
+      <TranscriptToggle excerpt={excerpt} />
     </article>
   );
 }
