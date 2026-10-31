@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildYtDlpArgs } from './extract.js';
+import { buildYtDlpArgs, isBlockedByYouTube, withProxySession } from './extract.js';
 
 const OUT = '/tmp/duly-noted-x/meeting.opus';
 const URL = 'https://www.youtube.com/watch?v=abc123';
@@ -31,5 +31,43 @@ describe('buildYtDlpArgs', () => {
 
   it('treats an empty-string proxy as unset rather than passing an empty --proxy value', () => {
     expect(buildYtDlpArgs(URL, OUT, '')).not.toContain('--proxy');
+  });
+});
+
+describe('withProxySession', () => {
+  it('replaces the ProxyWing session id and keeps the other username suffixes', () => {
+    const out = withProxySession(
+      'http://acct-country-us-session-abc123:secret@gw.proxywing.example:8080',
+      'ff00ee11',
+    );
+    expect(out).toContain('acct-country-us-session-ff00ee11:secret@');
+    expect(out).toContain('gw.proxywing.example:8080');
+  });
+
+  it('handles a session suffix that is not last in the username', () => {
+    const out = withProxySession(
+      'http://acct-session-abc123-country-us:secret@gw.proxywing.example:8080',
+      'ff00ee11',
+    );
+    expect(out).toContain('acct-session-ff00ee11-country-us:secret@');
+  });
+
+  it('returns a proxy url without a session suffix unchanged', () => {
+    const plain = 'http://user:pass@gw.proxywing.example:8080';
+    expect(withProxySession(plain, 'ff00ee11')).toBe(plain);
+  });
+});
+
+describe('isBlockedByYouTube', () => {
+  it.each([
+    'ERROR: unable to download video data: HTTP Error 403: Forbidden',
+    'WARNING: Unable to download webpage: HTTP Error 429: Too Many Requests',
+    'ERROR: [youtube] abc: Sign in to confirm you’re not a bot.',
+  ])('treats %s as a block worth retrying', (detail) => {
+    expect(isBlockedByYouTube(detail)).toBe(true);
+  });
+
+  it('does not retry a video that is simply gone', () => {
+    expect(isBlockedByYouTube('ERROR: [youtube] abc: Video unavailable')).toBe(false);
   });
 });
