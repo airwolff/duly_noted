@@ -70,7 +70,7 @@ export function MeetingPlayer({
     <PlayerContext.Provider value={{ activeId: cue.segment?.id ?? null, play }}>
       {/* Negative margins bleed the band to the column edges so content
           scrolling underneath never shows beside the video. */}
-      <div className="sticky top-0 z-20 -mx-4 mt-4 border-b border-stone-200 bg-stone-50/95 px-4 py-3 backdrop-blur sm:-mx-8 sm:px-8">
+      <div className="sticky top-0 z-20 -mx-4 mt-4 border-b border-stone-200 bg-stone-50 px-4 py-3 sm:-mx-8 sm:px-8">
         <div className="flex items-center gap-5">
           <YouTubeEmbed
             key={cue.n}
