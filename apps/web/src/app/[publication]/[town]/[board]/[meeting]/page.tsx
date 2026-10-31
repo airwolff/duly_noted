@@ -7,6 +7,8 @@ import { formatMeetingDate } from '@/lib/format-meeting-date.js';
 import { formatDuration } from '@/lib/format-duration.js';
 import { Breadcrumbs } from '@/components/breadcrumbs.js';
 import { SegmentCard } from '@/components/segment-card.js';
+import { MeetingPlayer } from '@/components/meeting-player.js';
+import { stripUtteranceMarkers } from '@/lib/clean-excerpt.js';
 import type { Database } from '@duly-noted/db';
 
 type MeetingRow = Database['public']['Tables']['meetings']['Row'];
@@ -79,47 +81,57 @@ export default async function MeetingPage({
           },
         ]}
       />
-      <p className="mt-6 text-sm font-semibold uppercase tracking-wide text-stone-500">
-        {chain.town.name} {chain.board.name}
-      </p>
-      <h1 className="mt-1 font-serif text-4xl font-bold tracking-tight">
-        {date ?? meeting.title ?? 'Untitled meeting'}
-      </h1>
-      <p className="mt-2 text-stone-600">
-        {meta.join(' · ')}
-        {' · '}
-        <a href={youtubeWatch} className="text-blue-800 hover:underline" rel="noreferrer">
-          Watch the full meeting on YouTube
-        </a>
-      </p>
-      {meeting.summary && (
-        <section className="mt-8 rounded-lg border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Summary</h2>
-          {/* max-w-prose caps the measure at ~65 characters; longer lines are
+      <MeetingPlayer
+        youtubeId={meeting.youtube_id}
+        segments={segments.map((s) => ({
+          id: s.id,
+          title: s.title,
+          startSeconds: s.start_time_seconds,
+          excerpt: stripUtteranceMarkers(s.transcript_excerpt),
+        }))}
+      >
+        <p className="mt-6 text-sm font-semibold uppercase tracking-wide text-stone-500">
+          {chain.town.name} {chain.board.name}
+        </p>
+        <h1 className="mt-1 font-serif text-4xl font-bold tracking-tight">
+          {date ?? meeting.title ?? 'Untitled meeting'}
+        </h1>
+        <p className="mt-2 text-stone-600">
+          {meta.join(' · ')}
+          {' · '}
+          <a href={youtubeWatch} className="text-blue-800 hover:underline" rel="noreferrer">
+            Watch the full meeting on YouTube
+          </a>
+        </p>
+        {meeting.summary && (
+          <section className="mt-8 rounded-lg border border-stone-200 bg-white p-6 shadow-sm sm:p-8">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">
+              Summary
+            </h2>
+            {/* max-w-prose caps the measure at ~65 characters; longer lines are
               the main thing that makes a multi-paragraph summary hard to read
               on a wide screen. leading-relaxed opens up the line height. */}
-          <div className="mt-4 max-w-prose space-y-4 font-serif text-lg leading-relaxed text-stone-800">
-            {splitParagraphs(meeting.summary).map((para, i) => (
-              <p key={i}>{para}</p>
-            ))}
+            <div className="mt-4 max-w-prose space-y-4 font-serif text-lg leading-relaxed text-stone-800">
+              {splitParagraphs(meeting.summary).map((para, i) => (
+                <p key={i}>{para}</p>
+              ))}
+            </div>
+          </section>
+        )}
+        <section className="mt-12">
+          <h2 className="font-serif text-2xl font-bold">Agenda</h2>
+          <p className="mt-1 text-sm text-stone-500">
+            In the order discussed. Play any item to jump the video to that point.
+          </p>
+          <div className="mt-6 space-y-4">
+            {segments.length === 0 ? (
+              <p className="text-stone-500">No agenda items are available for this meeting.</p>
+            ) : (
+              segments.map((s) => <SegmentCard key={s.id} segment={s} />)
+            )}
           </div>
         </section>
-      )}
-      <section className="mt-12">
-        <h2 className="font-serif text-2xl font-bold">Agenda</h2>
-        <p className="mt-1 text-sm text-stone-500">
-          In the order discussed. Play any item to jump to that point in the video.
-        </p>
-        <div className="mt-6 space-y-4">
-          {segments.length === 0 ? (
-            <p className="text-stone-500">No agenda items are available for this meeting.</p>
-          ) : (
-            segments.map((s) => (
-              <SegmentCard key={s.id} segment={s} youtubeId={meeting.youtube_id} />
-            ))
-          )}
-        </div>
-      </section>
+      </MeetingPlayer>
     </main>
   );
 }
