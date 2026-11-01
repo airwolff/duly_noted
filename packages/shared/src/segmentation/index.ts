@@ -8,7 +8,7 @@ export {
   TITLE_MAX_LEN,
   DESCRIPTION_MAX_LEN,
   TITLE_TARGET_MAX_LEN,
-  DESCRIPTION_TARGET_MAX_LEN,
+  DESCRIPTION_TARGET_MAX_WORDS,
   step1JsonSchema,
   step1OutputSchema,
   step2JsonSchema,

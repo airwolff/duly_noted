@@ -12,19 +12,26 @@ import { MARKER_TYPES, type MarkerType } from './taxonomy.js';
 const T_TOKEN_PATTERN = '^\\[T\\d+\\]$';
 
 export const TITLE_MAX_LEN = 120;
-export const DESCRIPTION_MAX_LEN = 500;
+export const DESCRIPTION_MAX_LEN = 1000;
 
 /**
  * What the prompt asks for, deliberately below what Zod enforces above. Same
  * mechanism as the summary bounds (see ../summarization/constants.ts): the
  * model aims at the figure the prompt names and overshoots it, and Anthropic
  * honors neither the `maxLength` in the JSON schema below nor the wording in
- * the prompt. A segment description came back at 506 against a stated and
- * enforced 500 and failed its meeting. Keeping ~150 chars of slack means an
- * overshoot lands inside the bound instead of killing the row.
+ * the prompt.
+ *
+ * The description has now been wrong twice, the same way the summary was. A
+ * 500-char target against a 500 bound came back at 506. A 350-char target
+ * against 500 came back at 571 — after the length-correction retry — on a 2.4 h
+ * meeting, killing it after the ASR spend. A model cannot count its own
+ * characters, so the description target is in words (60 words is roughly
+ * 350–400 characters) and the bound is 1000, which clears the observed 571
+ * with real margin. The title keeps a character target: at ~90 characters it
+ * has never overshot.
  */
 export const TITLE_TARGET_MAX_LEN = 90;
-export const DESCRIPTION_TARGET_MAX_LEN = 350;
+export const DESCRIPTION_TARGET_MAX_WORDS = 60;
 
 // --- Step 1: marker extraction --------------------------------------------
 
