@@ -231,6 +231,15 @@ async function determineBoundaries(
       throw new Error(`step 2 returned invalid T-token: ${parsed.end_token}`);
     }
     const endIdx = tIndex(parsed.end_token);
+    // The line just before the start means the model read the chapter as
+    // empty, which happens when the next marker follows immediately. Treat it
+    // as a one-line chapter rather than failing a meeting whose ASR is already
+    // paid for. Anything earlier is a real misread and still fails.
+    if (endIdx === startIdx - 1) {
+      console.warn(`step2-coerce start_token=${marker.start_token} end_token=${parsed.end_token}`);
+      ends.push(marker.start_token);
+      continue;
+    }
     if (endIdx < startIdx) {
       throw new Error(
         `step 2 returned end_token ${parsed.end_token} before start_token ${marker.start_token}`,

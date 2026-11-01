@@ -209,6 +209,57 @@ describe('runSegmentationOnce', () => {
     expect(failPatch!.patch.last_error).toBe('title length 121 out of bounds [1, 120]');
   });
 
+  it('treats an end_token one line before the start as a one-line chapter', async () => {
+    const { client, rpcCalls } = makeStubClient({
+      claimRow: {
+        id: 'meeting-6',
+        transcript_url: 'meetings/meeting-6/transcript.json',
+        duration_seconds: 600,
+      },
+      transcriptJson: synthTranscript,
+    });
+    const callStructured: CallStructured = vi
+      .fn()
+      .mockResolvedValueOnce({
+        markers: [{ marker_type: 'AGENDA_ITEM', start_token: '[T1]' }],
+      })
+      .mockResolvedValueOnce({ end_token: '[T0]' })
+      .mockResolvedValueOnce({ title: 'Budget item', description: 'The budget came up.' });
+
+    const outcome = await runSegmentationOnce({ supabase: client, callStructured });
+
+    expect(outcome.kind).toBe('segmented');
+    const args = rpcCalls.find((c) => c.fn === 'complete_segmentation')!.args as {
+      p_segments: Record<string, unknown>[];
+    };
+    expect(args.p_segments[0]!.start_time_seconds).toBe(3);
+    expect(args.p_segments[0]!.end_time_seconds).toBe(6);
+  });
+
+  it('marks failed when step 2 returns an end_token well before the start', async () => {
+    const { client } = makeStubClient({
+      claimRow: {
+        id: 'meeting-7',
+        transcript_url: 'meetings/meeting-7/transcript.json',
+        duration_seconds: 600,
+      },
+      transcriptJson: synthTranscript,
+    });
+    const callStructured: CallStructured = vi
+      .fn()
+      .mockResolvedValueOnce({
+        markers: [{ marker_type: 'AGENDA_ITEM', start_token: '[T2]' }],
+      })
+      .mockResolvedValueOnce({ end_token: '[T0]' });
+
+    const outcome = await runSegmentationOnce({ supabase: client, callStructured });
+
+    expect(outcome.kind).toBe('failed');
+    if (outcome.kind === 'failed') {
+      expect(outcome.message).toBe('step 2 returned end_token [T0] before start_token [T2]');
+    }
+  });
+
   it('marks failed when step 1 returns a T-token not in the lookup', async () => {
     const { client, updateCalls } = makeStubClient({
       claimRow: {
