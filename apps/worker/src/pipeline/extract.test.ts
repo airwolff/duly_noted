@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildYtDlpArgs, isBlockedByYouTube, withProxySession } from './extract.js';
+import {
+  buildTranscodeArgs,
+  buildYtDlpArgs,
+  isBlockedByYouTube,
+  withProxySession,
+} from './extract.js';
 
 const OUT = '/tmp/duly-noted-x/meeting.opus';
 const URL = 'https://www.youtube.com/watch?v=abc123';
@@ -73,5 +78,16 @@ describe('isBlockedByYouTube', () => {
 
   it('does not retry a video that is simply gone', () => {
     expect(isBlockedByYouTube('ERROR: [youtube] abc: Video unavailable')).toBe(false);
+  });
+});
+
+describe('buildTranscodeArgs', () => {
+  it('re-encodes to mono 24 kbps opus so long meetings fit the 50 MB Storage limit', () => {
+    const args = buildTranscodeArgs('/tmp/in.source.opus', OUT);
+    expect(args).toEqual(
+      expect.arrayContaining(['-ac', '1', '-c:a', 'libopus', '-b:a', '24k', '-vbr', 'constrained']),
+    );
+    expect(args.indexOf('-i')).toBeLessThan(args.indexOf('/tmp/in.source.opus'));
+    expect(args.at(-1)).toBe(OUT);
   });
 });

@@ -1,10 +1,44 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
 const YT_DLP_BINARY = process.env.YT_DLP_PATH ?? 'yt-dlp';
+const FFMPEG_BINARY = process.env.FFMPEG_PATH ?? 'ffmpeg';
+
+/**
+ * Re-encode the downloaded audio to mono 24 kbps opus (~11 MB/hour). The
+ * Supabase project is on the Free plan, whose 50 MB per-file Storage limit is
+ * fixed; YouTube's smallest stream (~50 kbps, ~22 MB/hour) put meetings over
+ * ~2.2 hours past it ("The object exceeded the maximum allowed size"). Mono
+ * 24 kbps with opus's voip tuning is ample for speech; AssemblyAI downmixes
+ * and resamples to 16 kHz mono anyway. Constrained VBR holds the rate: plain
+ * VBR overshot to ~45 kbps on tonal input in testing. About 4 hours fits.
+ */
+export function buildTranscodeArgs(inPath: string, outPath: string): string[] {
+  return [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-y',
+    '-i',
+    inPath,
+    '-vn',
+    '-ac',
+    '1',
+    '-c:a',
+    'libopus',
+    '-b:a',
+    '24k',
+    '-vbr',
+    'constrained',
+    '-application',
+    'voip',
+    outPath,
+  ];
+}
 
 /**
  * The smallest audio stream: YouTube's ~50 kbps opus (itag 249) where it
@@ -85,6 +119,29 @@ export async function extractAudio(
   proxyUrl?: string,
 ): Promise<void> {
   const url = `https://www.youtube.com/watch?v=${youtubeId}`;
+  // yt-dlp writes the source stream beside the final file; ffmpeg then
+  // re-encodes it to `outPath` (see buildTranscodeArgs).
+  const sourcePath = `${outPath}.source.opus`;
+  await downloadAudio(youtubeId, url, sourcePath, proxyUrl);
+  try {
+    await execFileAsync(FFMPEG_BINARY, buildTranscodeArgs(sourcePath, outPath), {
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  } catch (err) {
+    const e = err as { stderr?: string; message?: string };
+    const detail = e.stderr?.trim() || e.message || 'unknown ffmpeg failure';
+    throw new Error(`ffmpeg transcode failed for ${youtubeId}: ${detail}`);
+  } finally {
+    await rm(sourcePath, { force: true });
+  }
+}
+
+async function downloadAudio(
+  youtubeId: string,
+  url: string,
+  outPath: string,
+  proxyUrl?: string,
+): Promise<void> {
   const attempts = proxyUrl ? EXTRACT_ATTEMPTS : 1;
   let detail = 'unknown yt-dlp failure';
   for (let attempt = 1; attempt <= attempts; attempt++) {
