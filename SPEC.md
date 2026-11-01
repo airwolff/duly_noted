@@ -180,7 +180,7 @@ The Edge Function is one of two surfaces (the other being `apps/web`) the public
 - yt-dlp installed as a static binary downloaded to `/usr/local/bin/yt-dlp` and made executable; version pinned via build arg
 - ffmpeg version captured in the image (whatever the Debian bookworm package supplies); update intentionally, not on rebuild
 
-**Extraction command.** `yt-dlp -x --audio-format opus -o '{path}' '{youtube_url}'`. Opus minimizes Storage footprint (~15 MB/hour); AssemblyAI accepts opus natively.
+**Extraction command.** `yt-dlp -f 'worstaudio[acodec=opus]/worstaudio' -x --audio-format opus -o '{path}' '{youtube_url}'`. The format selector takes YouTube's smallest audio stream (~50 kbps opus, ~22 MB/hour) rather than yt-dlp's default `bestaudio` (~130 kbps, ~58 MB/hour): extraction runs through the per-GB residential proxy (ADR 0019), and long meetings at full bitrate were slow enough to fail partway. Speech transcribes fine at 50 kbps. Opus keeps the Storage footprint small; AssemblyAI accepts opus natively.
 
 **Storage.** Bucket `meeting-artifacts`, private. Path `meetings/{meeting_id}/audio.opus`. Audio retained indefinitely at v1; deletion policy revisited when storage cost lands as a real line item.
 

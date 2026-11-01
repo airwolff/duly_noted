@@ -7,13 +7,22 @@ const execFileAsync = promisify(execFile);
 const YT_DLP_BINARY = process.env.YT_DLP_PATH ?? 'yt-dlp';
 
 /**
+ * The smallest audio stream: YouTube's ~50 kbps opus (itag 249) where it
+ * exists, else the smallest audio of any codec. yt-dlp's default `bestaudio`
+ * is ~130 kbps, so a 2.3-hour meeting was ~130 MB through the residential
+ * proxy — slow enough that downloads 403'd partway, and billed per GB.
+ * Speech transcribes fine at 50 kbps; AssemblyAI resamples to 16 kHz anyway.
+ */
+export const AUDIO_FORMAT = 'worstaudio[acodec=opus]/worstaudio';
+
+/**
  * Build yt-dlp's argv. Split out from `extractAudio` so the proxy wiring is
  * unit-testable without spawning the binary. `--proxy` leads because yt-dlp
  * reads global options before the target url.
  */
 export function buildYtDlpArgs(url: string, outPath: string, proxyUrl?: string): string[] {
   const proxyArgs = proxyUrl ? ['--proxy', proxyUrl] : [];
-  return [...proxyArgs, '-x', '--audio-format', 'opus', '-o', outPath, url];
+  return [...proxyArgs, '-f', AUDIO_FORMAT, '-x', '--audio-format', 'opus', '-o', outPath, url];
 }
 
 /** Attempts per meeting before extraction fails the row. */
