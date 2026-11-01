@@ -7,6 +7,8 @@ const URL = 'https://www.youtube.com/watch?v=abc123';
 describe('buildYtDlpArgs', () => {
   it('emits the SPEC §Stage 2 extraction command when no proxy is configured', () => {
     expect(buildYtDlpArgs(URL, OUT, undefined)).toEqual([
+      '-f',
+      'worstaudio[acodec=opus]/worstaudio',
       '-x',
       '--audio-format',
       'opus',
@@ -20,6 +22,8 @@ describe('buildYtDlpArgs', () => {
     expect(buildYtDlpArgs(URL, OUT, 'http://user:pass@gw.proxywing.example:8080')).toEqual([
       '--proxy',
       'http://user:pass@gw.proxywing.example:8080',
+      '-f',
+      'worstaudio[acodec=opus]/worstaudio',
       '-x',
       '--audio-format',
       'opus',
