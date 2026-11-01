@@ -6,7 +6,7 @@
  * constraint (ADR 0015).
  */
 
-import { DESCRIPTION_TARGET_MAX_LEN, TITLE_TARGET_MAX_LEN } from './schemas.js';
+import { DESCRIPTION_TARGET_MAX_WORDS, TITLE_TARGET_MAX_LEN } from './schemas.js';
 
 export const STEP_1_SYSTEM_PROMPT = `You are a careful annotator of municipal selectboard meeting transcripts.
 
@@ -38,6 +38,6 @@ The chapter text below is bounded by [T{n}] tokens marking its start and end. Th
 
 Return:
 - title: a concise headline (aim for under ${TITLE_TARGET_MAX_LEN} characters) capturing what this chapter is about. Style guide: agenda-item titles should name the topic; public-comment titles should name the speaker if introduced ("Public comment from Jane Smith"); vote titles should name the motion ("Vote: approve treasurer's report"); procedure titles describe the procedural action.
-- description: 1–2 sentences (aim for under ${DESCRIPTION_TARGET_MAX_LEN} characters) summarizing what was said and what was decided, if anything. Be specific. Do not editorialize. Quote directly when material is contested or unclear.
+- description: 1–2 sentences (under ${DESCRIPTION_TARGET_MAX_WORDS} words) summarizing what was said and what was decided, if anything. Be specific. Do not editorialize. Quote directly when material is contested or unclear.
 
 Both fields are required and must be non-empty.`;

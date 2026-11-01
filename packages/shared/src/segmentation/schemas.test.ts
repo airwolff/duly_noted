@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DESCRIPTION_MAX_LEN,
-  DESCRIPTION_TARGET_MAX_LEN,
+  DESCRIPTION_TARGET_MAX_WORDS,
   TITLE_MAX_LEN,
   TITLE_TARGET_MAX_LEN,
   step1OutputSchema,
@@ -91,15 +91,17 @@ describe('step3OutputSchema', () => {
 
 describe('step 3 prompt targets vs enforced bounds', () => {
   it('keeps the asked-for length below the enforced length', () => {
-    // A description came back at 506 against a stated and enforced 500 and
-    // failed its meeting. The prompt must aim lower than Zod allows.
+    // A description came back at 506 against a stated and enforced 500, then
+    // at 571 against a 350-char target. The prompt asks in words; at a
+    // generous 6 chars per word the target must still sit well inside the
+    // enforced bound.
     expect(TITLE_TARGET_MAX_LEN).toBeLessThan(TITLE_MAX_LEN);
-    expect(DESCRIPTION_TARGET_MAX_LEN).toBeLessThan(DESCRIPTION_MAX_LEN);
-    expect(DESCRIPTION_MAX_LEN - DESCRIPTION_TARGET_MAX_LEN).toBeGreaterThanOrEqual(100);
+    expect(DESCRIPTION_TARGET_MAX_WORDS * 6).toBeLessThan(DESCRIPTION_MAX_LEN);
+    expect(DESCRIPTION_MAX_LEN).toBeGreaterThan(571);
   });
 
   it('states the target, not the ceiling, in the step 3 prompt', () => {
-    expect(STEP_3_SYSTEM_PROMPT).toContain(String(DESCRIPTION_TARGET_MAX_LEN));
+    expect(STEP_3_SYSTEM_PROMPT).toContain(`under ${DESCRIPTION_TARGET_MAX_WORDS} words`);
     expect(STEP_3_SYSTEM_PROMPT).not.toContain(String(DESCRIPTION_MAX_LEN));
   });
 });
