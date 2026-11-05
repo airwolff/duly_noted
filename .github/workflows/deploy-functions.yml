@@ -16,7 +16,7 @@ jobs:
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.122.1
 
       - name: Deploy asr-webhook
         run: supabase functions deploy asr-webhook --project-ref "$SUPABASE_PROJECT_REF"
