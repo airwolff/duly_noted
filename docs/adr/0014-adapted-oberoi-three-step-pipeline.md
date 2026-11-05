@@ -16,7 +16,7 @@ approaches in his history: the March 2024 baseline was a three-step
 LLM pipeline (marker extraction → boundary determination → title +
 description). His current production approach (post-summer 2024) is
 operator section-marking with AI sub-marker extraction, requiring a
-custom review UI. Maine selectboard meetings are structurally simpler
+custom review UI. Small-town selectboard meetings are structurally simpler
 and more agenda-predictable than NYC City Council hearings, so the
 earlier baseline plausibly transfers.
 

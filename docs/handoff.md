@@ -20,7 +20,7 @@ On 2026-08-10 the cron discovered the Aug 10 Select Board meeting and it reached
 **Exactly one action is outstanding, and only the user can perform it:**
 
 ```sql
-update publications set public_read = true where slug = 'midcoast-villager';
+update publications set public_read = true where slug = 'demo';
 ```
 
 Run it in the Supabase SQL editor:
@@ -33,7 +33,7 @@ correct; do **not** add an UPDATE grant to widen a permanent privilege for a one
 Flipping it is what makes the demo link shareable, and it is the **first time the anonymous RLS
 policies will ever have served a request** — they were written in #11 (2026-08-08) and have sat
 behind a `false` flag ever since. After the flip, load
-`https://duly-noted.pages.dev/midcoast-villager/lincolnville/select-board` signed out, and check a
+`https://duly-noted.pages.dev/demo/lincolnville/select-board` signed out, and check a
 **meeting page** too, not just the list: the anon policy on `segments` is the likeliest to be wrong.
 
 Everything else is optional, ordered in `docs/sprint.md`. Nothing is broken, nothing is waiting on
@@ -112,18 +112,18 @@ was wrong; it is why #14 shipped a build check instead of prose.
   deployed" assumption from the last handoff — the ADR 0019 proxy, the yt-dlp bump, and the Deno
   install are all provably live.
 - **The middleware is live and gating admin routes.** Probed anonymously against production on
-  2026-08-12 and again on 2026-08-20: `/midcoast-villager/admin/members` returns **307** to
-  `/login?redirectTo=%2Fmidcoast-villager%2Fadmin%2Fmembers`. Before #14 the same request returned
+  2026-08-12 and again on 2026-08-20: `/demo/admin/members` returns **307** to
+  `/login?redirectTo=%2Fdemo%2Fadmin%2Fmembers`. Before #14 the same request returned
   404 from the page's own `notFound()`. This is the first time in the project's history that the
   middleware has run in production, and it retires the "#14's behavior in production" assumption.
-- **Reader routes pass through the gate.** `/midcoast-villager/lincolnville/select-board` returns
+- **Reader routes pass through the gate.** `/demo/lincolnville/select-board` returns
   **404 with no redirect** — through the middleware untouched, refused by RLS because
   `public_read` is `false`. Exactly the ADR 0024 design.
 - **The cron is still alive at rest.** Newest `meetings` row created `2026-08-19T15:01:23Z` (a
   Harbor Cam livestream, correctly left at `discovered`) — eight days after the last human touched
   the repo.
 - 5 meetings `published`, 26 `failed`, 32 `discovered`, 63 total (queried 2026-08-20).
-- `publications.public_read` is still `false` for `midcoast-villager` (queried directly).
+- `publications.public_read` is still `false` for `demo` (queried directly).
 - **PRs #14 and #15 merged** to `main` 2026-08-12T19:01Z as `a2dfee4` and `eefd644`; CI, Migrate,
   and Deploy Edge Functions all green on both. Working tree clean.
 - `service_role` genuinely cannot read `memberships` (`42501 permission denied`). This is
@@ -184,7 +184,7 @@ The 26th is `17ca2eb0-174a-4b02-9483-8875f7f6be59` (`aUOt_cjYKpk`, Apr 13 2026),
 `storage upload failed for meetings/17ca2eb0-.../audio.opus: The ob…` — a different failure mode,
 never diagnosed. Cheap to retry (extraction already paid nothing durable; ASR not yet paid).
 
-**Tenant:** publication `midcoast-villager` (`eaad9df3-6404-4372-a238-6321704405f5`,
+**Tenant:** publication `demo` (`eaad9df3-6404-4372-a238-6321704405f5`,
 `public_read = false`) → town `lincolnville` (`7e5471aa-…`) → board `select-board`
 (`f1e36030-7a8b-4277-acd8-18ff0753cea3`, channel `UC1QHI-zQvIIkptXJsupfTZg`, playlist
 `UU1QHI-zQvIIkptXJsupfTZg`, `title_pattern` `select board`, `min_duration_seconds` 600,
@@ -219,11 +219,11 @@ Ordering and rationale live in **`docs/sprint.md`** — do not duplicate them he
   negligible; observed Lincolnville meetings run 1.0–1.2 h, so the real per-meeting figure sits
   below SPEC's estimate. Three caveats: (a) it is config only — a `towns` row plus a `boards` row
   with a channel ID, `title_pattern`, and `min_duration_seconds`; no migration, no deploy; (b) a
-  second **town** under `midcoast-villager` is not a second tenant, so it does not hit the root
+  second **town** under `demo` is not a second tenant, so it does not hit the root
   `CLAUDE.md` §7 multi-publication prohibition; (c) every pipeline fix so far is proven against
   exactly one channel — expect `title_pattern` tuning and possibly another livestream-duration
   surprise.
-- **Whether `public_read` stays on** after the Villager conversation. ADR 0024 says it should go
+- **Whether `public_read` stays on** after the demo conversations. ADR 0024 says it should go
   off when the relationship becomes paid.
 
 ---
@@ -261,5 +261,5 @@ Ordering and rationale live in **`docs/sprint.md`** — do not duplicate them he
 - **Failed meetings are never retried automatically** (root `CLAUDE.md` §7). Recovery is a manual
   status reset, to the stage that failed — never to `pending`, which re-runs extraction and
   re-pays ASR. A stored transcript means re-running summarization does **not** re-pay ASR.
-- **The user's account** (`andyjwolff@gmail.com`) is already a member of `midcoast-villager`.
+- **The user's account** is already a member of `demo`.
 - **Commits here carry no `Co-Authored-By: Claude` trailer** — the user asked for it to be removed.

@@ -17,7 +17,7 @@ describe('meetingDate', () => {
     expect(meetingDate('Select Board - May 11, 2026', '2026-05-20T12:00:00Z')).toBe('2026-05-11');
   });
 
-  it('falls back to the upload date in Maine time when the title has no date', () => {
+  it('falls back to the upload date in the fixed meeting time zone when the title has no date', () => {
     // 01:30 UTC on Aug 11 is still Aug 10 in America/New_York.
     expect(meetingDate('Lincolnville Select Board Meeting', '2026-08-11T01:30:00Z')).toBe(
       '2026-08-10',

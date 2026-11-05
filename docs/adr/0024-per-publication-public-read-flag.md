@@ -18,7 +18,7 @@ mail, and click a link before seeing anything. For an unsolicited demo
 that is enough friction to lose the meeting, and the content in question
 — Lincolnville Select Board proceedings — is public record.
 
-The immediate need is to show Midcoast Villager the product. The durable
+The immediate need is to show a prospective publication the product. The durable
 need is that this must not damage the paid, invitation-only model that
 the same tables serve.
 
@@ -64,7 +64,7 @@ publication.
 
 ## Consequences
 
-- Midcoast Villager can be made world-readable with one `UPDATE` and
+- The configured publication can be made world-readable with one `UPDATE` and
   made private again the same way. No deploy, no migration.
 - A second tenant is private from the instant it is created. The paid
   model is the default path, not a thing to remember to re-enable.
@@ -77,7 +77,7 @@ publication.
   rather than the real publication.
 - Public reading changes what "private app" means for the configured
   tenant while the flag is on. That is a product posture change, not
-  only a technical one, and it should be off again before the Villager
+  only a technical one, and it should be off again before a prospect
   relationship becomes a paid one.
 - Anon traffic is unauthenticated and therefore unmetered per-user. At
   v1 corpus scale on Supabase Pro this is not a cost concern; if a

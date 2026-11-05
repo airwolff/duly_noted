@@ -18,7 +18,7 @@ findings_filtered_by_known_non_issues: 0
 Slice 3 ships the segmentation pipeline: a new `segments` table (RLS +
 GRANTs paired), two RPCs (`claim_segmenting_meeting`,
 `complete_segmentation`), a `chaptering` transient enum value, the
-T-token synthetic timestamp scheme + Zod/JSON Schema validators + Maine
+T-token synthetic timestamp scheme + Zod/JSON Schema validators + selectboard
 selectboard marker taxonomy + three-step prompts in
 `packages/shared/src/segmentation/`, and the worker handler
 (`apps/worker/src/pipeline/segment.ts` + `anthropic.ts`) that picks up

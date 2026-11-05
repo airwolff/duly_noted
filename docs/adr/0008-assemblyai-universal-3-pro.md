@@ -43,5 +43,5 @@ account-tied address before the first ASR submission of any kind.
 - AssemblyAI ToS §4.3 grants a training license with plan-conditional
   opt-out; opt-out confirmation must land before the first submission
   including dev/testing.
-- Revisit: if WER on Maine accents proves materially worse than
+- Revisit: if WER on regional accents proves materially worse than
   benchmarks suggest after a smoke run.

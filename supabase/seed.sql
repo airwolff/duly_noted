@@ -4,13 +4,13 @@
 -- produce duplicates or FK failures.
 
 insert into public.publications (slug, name)
-values ('midcoast-villager', 'Midcoast Villager')
+values ('demo', 'Duly Noted Demo')
 on conflict (slug) do nothing;
 
 insert into public.towns (publication_id, slug, name)
 select p.id, 'lincolnville', 'Lincolnville'
   from public.publications p
- where p.slug = 'midcoast-villager'
+ where p.slug = 'demo'
 on conflict (publication_id, slug) do nothing;
 
 insert into public.boards (
@@ -31,7 +31,7 @@ select
   from public.towns t
   join public.publications p on p.id = t.publication_id
  where t.slug = 'lincolnville'
-   and p.slug = 'midcoast-villager'
+   and p.slug = 'demo'
 on conflict (town_id, slug) do nothing;
 
 -- Smoke-test row that bypasses cron discovery: status='pending' so the worker
@@ -43,7 +43,7 @@ select b.id, 'vWsJcTssN9s', 'pending', 'Lincolnville Select Board Meeting'
   join public.publications p on p.id = t.publication_id
  where b.slug = 'select-board'
    and t.slug = 'lincolnville'
-   and p.slug = 'midcoast-villager'
+   and p.slug = 'demo'
 on conflict (youtube_id) do nothing;
 
 -- TEST-ONLY helper for packages/db/src/invitations.test.ts: lets the

@@ -22,13 +22,13 @@ describe('middleware', () => {
   it('redirects unauthenticated admin requests to /login with redirectTo preserved', async () => {
     const { NextRequest } = await import('next/server');
     const { middleware } = await import('./middleware.js');
-    const req = new NextRequest('http://localhost/midcoast-villager/admin/members');
+    const req = new NextRequest('http://localhost/demo/admin/members');
     const res = await middleware(req);
     expect(res.status).toBe(307);
     const location = res.headers.get('location')!;
     const url = new URL(location);
     expect(url.pathname).toBe('/login');
-    expect(url.searchParams.get('redirectTo')).toBe('/midcoast-villager/admin/members');
+    expect(url.searchParams.get('redirectTo')).toBe('/demo/admin/members');
   });
 
   it('preserves the query string in redirectTo', async () => {
@@ -48,11 +48,11 @@ describe('middleware', () => {
     const { middleware } = await import('./middleware.js');
     for (const path of [
       '/',
-      '/midcoast-villager',
-      '/midcoast-villager/lincolnville',
-      '/midcoast-villager/lincolnville/select-board',
-      '/midcoast-villager/lincolnville/select-board/6796cf74-170e-4a51-b268-01e8e064d0dc',
-      '/midcoast-villager/search?q=harbor',
+      '/demo',
+      '/demo/lincolnville',
+      '/demo/lincolnville/select-board',
+      '/demo/lincolnville/select-board/6796cf74-170e-4a51-b268-01e8e064d0dc',
+      '/demo/search?q=harbor',
     ]) {
       const res = await middleware(new NextRequest(`http://localhost${path}`));
       expect(res.headers.get('location'), `expected pass-through for ${path}`).toBeNull();
