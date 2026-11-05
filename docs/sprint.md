@@ -32,10 +32,10 @@ Confirm the middleware actually loaded before trusting any of that — see the b
 ## 2. Flip `public_read` and exercise the anon path
 
 ```sql
-UPDATE publications SET public_read = true WHERE slug = 'midcoast-villager';
+UPDATE publications SET public_read = true WHERE slug = 'demo';
 ```
 
-Then load `https://duly-noted.pages.dev/midcoast-villager/lincolnville/select-board` **signed
+Then load `https://duly-noted.pages.dev/demo/lincolnville/select-board` **signed
 out**. This is the **first time the anon RLS policies have ever been exercised** — they were
 written in #11 and have sat behind a `false` flag since. Check the meeting page too, not just the
 list: `select('*, segments(*)')` was narrowed in #11 and the anon policy on `segments` is the one
@@ -116,7 +116,7 @@ re-deriving them.
 - **Add a second town.** ~$1.10–1.55/meeting → **~$4.40–6.20 for four, ~$5.50–7.75 for five**
   against a $8 budget. Config only: a `towns` row plus a `boards` row with a channel ID,
   `title_pattern`, and `min_duration_seconds` — no migration, no deploy. A second _town_ under
-  `midcoast-villager` is not a second tenant, so root `CLAUDE.md` §7 doesn't bar it. Expect
+  `demo` is not a second tenant, so root `CLAUDE.md` §7 doesn't bar it. Expect
   `title_pattern` tuning: every pipeline fix so far is proven against exactly one channel.
 
 ## Explicitly out of scope this sprint
@@ -124,7 +124,7 @@ re-deriving them.
 - **B10 — demo mode.** Largely superseded by ADR 0024's `public_read` flag. Survives only if a
   reason emerges to demo against insulated content.
 - **B4a / B4b — operator review gate and residual admin surfaces.** No trigger has fired. B4b waits
-  until Aaron asks; SQL-correcting an edge case is cheaper than the UI until then.
+  until the publication operator asks; SQL-correcting an edge case is cheaper than the UI until then.
 - **B5 / B6 — transcript-aware summarization, speaker identification.** Both need an eval or an
   audit finding first. Summaries currently look good enough that neither trigger has fired.
 - **B1 / B2 / B8** — no trigger fired.

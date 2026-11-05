@@ -133,7 +133,7 @@ Variable cost (ASR, LLM, embeddings, egress) is set in Stages 2, 4, 6, 9.
 
 # Stage 2 — ASR vendor
 
-**Vendor: AssemblyAI Universal-3 Pro.** $0.21/hr at 2026-05 list pricing, diarization included in base rate. English-primary; six-language support sufficient for Maine municipal meetings. Universal-3 Pro selected over Universal-2 ($0.15/hr) for accent, rare-word, and alphanumeric accuracy. The $0.06/hr premium is acceptable cost for the quality delta.
+**Vendor: AssemblyAI Universal-3 Pro.** $0.21/hr at 2026-05 list pricing, diarization included in base rate. English-primary; six-language support sufficient for US municipal meetings. Universal-3 Pro selected over Universal-2 ($0.15/hr) for accent, rare-word, and alphanumeric accuracy. The $0.06/hr premium is acceptable cost for the quality delta.
 
 **ToS posture.** AssemblyAI ToS §4.3 grants AssemblyAI a license to train on customer audio with plan-conditional opt-out. Opt-out is by email request to `data-opt-out@assemblyai.com` from the account-tied address; written confirmation establishes the forward-looking effective timestamp. Confirmation must land before the first ASR submission of any kind, including dev/testing.
 
@@ -235,7 +235,7 @@ Town Meeting and Planning Board content on the same channel are separate board e
 
 Single-pass per chunk, per marker, per chapter — no multi-LLM consensus, no retry on schema-valid output. Multi-LLM consensus and claim grounding are explicit v2 deferrals (CLAUDE.md §7).
 
-**Methodology note.** Oberoi's current (post-summer 2024) production approach is operator section-marking + AI sub-marker extraction, requiring a custom review UI. The three-step automated pipeline used here is Oberoi's earlier (March 2024) baseline, which he acknowledged as overfit to NYC City Council meetings. Maine selectboard meetings are structurally simpler and more agenda-predictable; the automated baseline is sufficient for v1. The operator section-marking approach supersedes this when the slice that builds the operator review UI lands.
+**Methodology note.** Oberoi's current (post-summer 2024) production approach is operator section-marking + AI sub-marker extraction, requiring a custom review UI. The three-step automated pipeline used here is Oberoi's earlier (March 2024) baseline, which he acknowledged as overfit to NYC City Council meetings. Small-town selectboard meetings are structurally simpler and more agenda-predictable; the automated baseline is sufficient for v1. The operator section-marking approach supersedes this when the slice that builds the operator review UI lands.
 
 **Marker taxonomy** (`marker_type` enum, per-board tunability deferred to pass 2):
 
@@ -611,7 +611,7 @@ create table public.invitations (
 
 Email is stored lowercase, enforced by CHECK. Supabase Auth has stored `auth.users.email` lowercased since gotrue PR #110 (2021), so `NEW.email` arriving in the trigger is already normalized; the CHECK is defense-in-depth.
 
-`invited_by_user_id` is nullable to support the system-bootstrap case (Andy invites Aaron before Andy has a membership row of his own) and uses `ON DELETE SET NULL` so audit trail of past invitations survives the inviter's removal.
+`invited_by_user_id` is nullable to support the system-bootstrap case (Andy invites the publication operator before Andy has a membership row of his own) and uses `ON DELETE SET NULL` so audit trail of past invitations survives the inviter's removal.
 
 `expires_at` defaults to 7 days per Makerkit's reference pattern for invitation TTLs. `accepted_at` and `revoked_at` are null on open invitations; an invitation is "open" iff both are null and `expires_at > now()`.
 
@@ -774,7 +774,7 @@ A single admin route ships at `/{publication.slug}/admin/members`. Server compon
 - Invite form: email input (validated lowercase), role selector (`reader` | `editor` | `admin`), submit. Posts via server action to the `invite-user` Edge Function with the caller's JWT.
 - Pending invitations table: rows from `invitations WHERE publication_id = $? AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`, ordered by `created_at DESC`. Columns: email, role, created_at, expires_at. RLS-filtered to the current publication's admins per the `authenticated admin select invitations` policy.
 
-The admin UI does NOT ship at v1: member list view (active memberships), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view. These residual surfaces stay in Backlog B4. The Slice 7 admin surface is narrowly scoped to "invite a new member and see what's pending," which is the minimum that gives the publication operator (Aaron) self-service ability without an admin chokepoint at Andy.
+The admin UI does NOT ship at v1: member list view (active memberships), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view. These residual surfaces stay in Backlog B4. The Slice 7 admin surface is narrowly scoped to "invite a new member and see what's pending," which is the minimum that gives the publication operator self-service ability without an admin chokepoint at Andy.
 
 **Edge Function `invite-user`.**
 
@@ -795,7 +795,7 @@ The Edge Function is the only surface that calls `auth.admin.inviteUserByEmail` 
 `shouldCreateUser: false` on the login form means random emails cannot self-register. The only paths into `auth.users` at v1 are:
 
 - `inviteUserByEmail` from the `invite-user` Edge Function (admin-triggered).
-- Manual `inviteUserByEmail` or `createUser` from Andy's local script (initial bootstrap of Aaron's admin membership).
+- Manual `inviteUserByEmail` or `createUser` from Andy's local script (initial bootstrap of the publication operator's admin membership).
 
 There is no public signup surface. The Stage 8 "Authenticated user with no membership row" edge case can still occur (e.g., an invitation expires before the user clicks, or an admin revokes an invitation after `auth.users` creation), but the surface area for unintended access is bounded to invited-then-revoked rather than open-to-anyone.
 
@@ -849,7 +849,7 @@ The hybrid layout matches the locked product decision: summary at top, chaptered
 
 **Bootstrap and edge cases.**
 
-- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; the invitation-based path established in Slice 7 is the sole provisioning route. Andy bootstraps Aaron's admin membership via a one-shot SQL `INSERT INTO invitations` plus `inviteUserByEmail` script invocation; after that bootstrap, all further invitations flow through the `/{publication.slug}/admin/members` admin UI. Bulk CSV invite remains in Backlog B8.
+- Authenticated user with no membership row: reader pages render empty. No auto-grant on signup; the invitation-based path established in Slice 7 is the sole provisioning route. Andy bootstraps the publication operator's admin membership via a one-shot SQL `INSERT INTO invitations` plus `inviteUserByEmail` script invocation; after that bootstrap, all further invitations flow through the `/{publication.slug}/admin/members` admin UI. Bulk CSV invite remains in Backlog B8.
 - Direct URL access to a `meetings.id` at `status != 'published'`: 404. RLS hides the row from the SSR client; the page renders the standard not-found surface.
 - Direct URL with a publication/town/board slug the user has no membership for: 404 on the same RLS path.
 - Direct URL to `/{publication.slug}/admin/members` by a non-admin authenticated user: 404 via `notFound()` (per the admin-role check in the page's server component; the RLS policy on `invitations` is the defense-in-depth boundary, the explicit check is the contract-level boundary). The 404 is indistinguishable from a route that doesn't exist, which is the intended behavior for surfaces a non-admin should not know about.
@@ -958,8 +958,8 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
   - **B4b — Residual member-management surfaces.** Slice 7 shipped only the invite form and the pending-invitations list view under `/{publication.slug}/admin/members`. The remaining admin operations stay deferred: member list view (active memberships with role display), role change UI, member removal UI, revoke pending invitation UI, resend invitation UI, audit log view of past invitations. Each is a real operational capability but none blocks the demo or the manual QA sweep — Andy can SQL-correct edge cases (typo'd invitations, removals, role corrections) until the residual UI lands.
 - **Why:**
   - B4a: Oberoi's documented practice is 10–30 min per meeting of human review (entity mistranscriptions, chapter boundaries, summary inaccuracies). V1 deviates because no operator UI exists and an operator gate without UI orphans every completed meeting at `review`. Whether the gate is load-bearing for newsroom-grade publication is unknown — depends on observed quality of summarization output and downstream-publication risk tolerance. The `review` slot in the `meeting_status` enum is preserved for this slice.
-  - B4b: The Slice 7 admin surface was narrowly scoped to the operational chokepoint that demo-blocked (Aaron self-serving invites). The residual surfaces are quality-of-life rather than chokepoint-of-flow; deferring them keeps Slice 7 small and ships them when their absence becomes friction rather than as speculative scope.
-- **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught (fires B4a), or (b) the residual admin surfaces become friction operationally — Aaron requests a role-change UI, a member-list view, or revoke-resend tooling (fires B4b), or (c) the slice that builds either surface picks the other up alongside given the shared route prefix. Whichever fires first.
+  - B4b: The Slice 7 admin surface was narrowly scoped to the operational chokepoint that demo-blocked (the publication operator self-serving invites). The residual surfaces are quality-of-life rather than chokepoint-of-flow; deferring them keeps Slice 7 small and ships them when their absence becomes friction rather than as speculative scope.
+- **Trigger:** Either (a) post-publication audit of v1 output reveals systematic errors that operator review would have caught (fires B4a), or (b) the residual admin surfaces become friction operationally — the publication operator requests a role-change UI, a member-list view, or revoke-resend tooling (fires B4b), or (c) the slice that builds either surface picks the other up alongside given the shared route prefix. Whichever fires first.
 
 ## B5 — Transcript-aware meeting summarization
 
@@ -982,7 +982,7 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 ## B8 — Config-seed script for tenant boards
 
 - **What:** A one-shot script (`apps/worker/scripts/seed-tenant-config.ts` or equivalent) that reads a CSV (publication / town / board / YouTube channel ID / title pattern / min duration / ingest_since_days / membership emails with roles) and runs the corresponding INSERTs into `publications`, `towns`, `boards`, and (post-Slice-7) `invitations` plus a batched call to `inviteUserByEmail` for each invited member. Idempotent (`ON CONFLICT ... DO NOTHING` or matching upsert per row; the partial unique index on `invitations` handles the invite-side idempotency natively). The KB inventories at `kb_knox-county-municipal-video`, `kb_waldo-county-municipal-video`, and the `kb_meeting-cadence-*` files are the source data for the CSV's initial population.
-- **Why:** v1 ships with one board (Lincolnville Select Board) configured via hand-written SQL — fine at single-board scale. As coverage expands toward full Midcoast Villager geography (Knox County 18 municipalities + Waldo County 26 municipalities + Hancock County + MDI = roughly 20–30 candidate boards with verified video presence per the KB inventories), hand-rolling INSERTs becomes the friction the build was meant to avoid. Per the local-govt-meeting-apis KB synthesis, no third-party API serves the target Maine geographies (GatherGov, Council Data Project, Legistar, and CivicBand all received FAILS-TO-SERVE verdicts) — the only feasible automation is a seed script reading the KB's already-completed research as a CSV. The membership-side of the script writes through `invitations` (the Slice 7 path) rather than direct `memberships` inserts, so seeded users go through the trigger-driven resolution flow like every other invited user.
+- **Why:** v1 ships with one board (Lincolnville Select Board) configured via hand-written SQL — fine at single-board scale. As coverage expands toward a publication's full coverage area (roughly 20–30 candidate boards with verified video presence per the KB inventories), hand-rolling INSERTs becomes the friction the build was meant to avoid. Per the local-govt-meeting-apis KB synthesis, no third-party API serves the target geographies (GatherGov, Council Data Project, Legistar, and CivicBand all received FAILS-TO-SERVE verdicts) — the only feasible automation is a seed script reading the KB's already-completed research as a CSV. The membership-side of the script writes through `invitations` (the Slice 7 path) rather than direct `memberships` inserts, so seeded users go through the trigger-driven resolution flow like every other invited user.
 - **Trigger:** A second board or a second publication is provisioned. At that point the CSV-to-SQL workflow is more efficient than additional hand-INSERTs. Until then, hand-rolling matches the actual volume.
 
 ## B9 — NI-009 resolution: Deno-side import wiring for `packages/shared` in search Edge Function
@@ -993,10 +993,10 @@ Operational discoveries and deferred follow-ups that don't fit any of: wont-fix,
 
 ## B10 — Demo mode for portfolio access
 
-- **What:** Unauthenticated `/demo` route, separate `demo` publication seeded with public-record meetings, demo signup affordance that uses the Slice 7 invitation infrastructure server-side (form takes email → server creates invitation for demo publication + calls `inviteUserByEmail` → trigger resolves user as a demo-publication reader on magic-link click). Banner on demo-scoped pages indicating demo framing. Real Midcoast Villager publication stays invitation-only.
+- **What:** Unauthenticated `/demo` route, separate sandbox publication seeded with public-record meetings, demo signup affordance that uses the Slice 7 invitation infrastructure server-side (form takes email → server creates invitation for demo publication + calls `inviteUserByEmail` → trigger resolves user as a demo-publication reader on magic-link click). Banner on demo-scoped pages indicating demo framing. Real client publications stay invitation-only.
 - **Why:** Job-application demo surface. Prospective employers / recruiters can try the product end-to-end without coordinating with the developer. Pattern 1 from the Slice 7 demo-mode discussion: preserves the "private app" product lock by keeping the real publication invitation-only and routing demo access to a parallel tenant. The Slice 7 invitation schema, trigger, and resolution path are publication-agnostic specifically so this slice can layer on additively rather than reshaping Slice 7's data model.
 - **Status note (2026-08-08):** largely superseded by ADR 0024's `public_read` flag, which delivers B10's stated purpose — a prospect exploring without coordinating with the developer — against the real publication instead of a seeded parallel tenant. B10 survives only if a reason emerges to demo against insulated content.
-- **Trigger:** Pickup after Slice 7 ships and its audit/fixes close. Sub-decisions to resolve at planning time: content set (same Lincolnville Select Board meetings, a different Maine board for full insulation, or a hand-curated subset), demo signup gate (fully open with Cloudflare rate-limiting vs token-gated per recruiter), demo membership TTL (permanent vs expiring), and Aaron/Will clearance (required for same-content or hand-curated options). Sequenced before B7 so the pre-launch test sweep exercises the demo path.
+- **Trigger:** Pickup after Slice 7 ships and its audit/fixes close. Sub-decisions to resolve at planning time: content set (same Lincolnville Select Board meetings, a different board for full insulation, or a hand-curated subset), demo signup gate (fully open with Cloudflare rate-limiting vs token-gated per recruiter), demo membership TTL (permanent vs expiring), and publication operator clearance (required for same-content or hand-curated options). Sequenced before B7 so the pre-launch test sweep exercises the demo path.
 
 ## B12 — Investigate local `supabase db push --linked` desync with CI Migrate workflow
 

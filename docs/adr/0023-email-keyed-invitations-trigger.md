@@ -13,8 +13,8 @@ until after the user had completed a magic-link round-trip (at which
 point `auth.uid()` resolves to a real `auth.users.id`). This forced an
 operational sequence: invite the user → wait for them to sign in →
 inspect `auth.users` → SQL-insert the membership with the resolved
-`user_id`. The publication operator (Aaron) cannot self-serve through
-this sequence because he lacks both `service_role` access and the
+`user_id`. The publication operator cannot self-serve through
+this sequence because they lack both `service_role` access and the
 mechanical attention required to monitor first sign-ins.
 
 Slice 7 introduces an invitation-based path that removes the
@@ -192,12 +192,12 @@ this trigger surface.
 
 ### Bootstrap path uniformity
 
-The initial bootstrap of Aaron's admin membership goes through the
+The initial bootstrap of the publication operator's admin membership goes through the
 same invitations path as every subsequent invitation. Andy runs one
-SQL `INSERT INTO invitations(email='aaron@...', publication_id=midcoast,
+SQL `INSERT INTO invitations(email='operator@...', publication_id=<publication>,
 role='admin', invited_by_user_id=null)` plus one `inviteUserByEmail`
-SDK call from a local script. Aaron clicks his magic link, the trigger
-resolves the invitation, Aaron is admin. From that point onward, Aaron
+SDK call from a local script. The operator clicks their magic link, the trigger
+resolves the invitation, the operator is admin. From that point onward, the operator
 issues all further invitations through the admin form.
 
 No special-case path. No direct membership inserts. The trigger is

@@ -17,8 +17,8 @@ const MONTHS = [
 // on their first three letters, so any spelling that starts right works.
 const TITLE_DATE_RE = /\b([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\b/;
 
-// Board meetings happen in Maine, so a bare upload timestamp is read as a
-// local calendar date there, not in UTC.
+// Meeting time zone is fixed to Eastern for now, so a bare upload timestamp is
+// read as a local calendar date there, not in UTC.
 const MEETING_TIME_ZONE = 'America/New_York';
 
 function isoDate(year: number, month: number, day: number): string | null {

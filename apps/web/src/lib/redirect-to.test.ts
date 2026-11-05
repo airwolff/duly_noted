@@ -3,9 +3,7 @@ import { sanitizeRedirectTo } from './redirect-to.js';
 
 describe('sanitizeRedirectTo', () => {
   it('returns the path unchanged for absolute same-origin paths', () => {
-    expect(sanitizeRedirectTo('/midcoast-villager/lincolnville')).toBe(
-      '/midcoast-villager/lincolnville',
-    );
+    expect(sanitizeRedirectTo('/demo/lincolnville')).toBe('/demo/lincolnville');
   });
 
   it('returns "/" for null or empty', () => {
